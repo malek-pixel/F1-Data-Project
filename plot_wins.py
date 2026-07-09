@@ -37,7 +37,7 @@ def plot_top_constructors_for_decade(decade_wins, seasons_in_decade, decade, top
 
     plt.figure(figsize=(8, 5))
     plt.barh(constructors[::-1], counts[::-1], color="#c8102e")
-    plt.title(f"Top Constructors by Wins — {decade}s ({len(seasons_in_decade[decade])} seasons)")
+    plt.title(f"Top Constructors by Wins - {decade}s ({len(seasons_in_decade[decade])} seasons)")
     plt.xlabel("Race wins")
     plt.tight_layout()
     path = os.path.join(OUTPUT_DIR, f"top_constructors_{decade}s.png")
