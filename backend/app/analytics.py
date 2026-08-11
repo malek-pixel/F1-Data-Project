@@ -382,6 +382,37 @@ def race_results(conn: sqlite3.Connection, race_id: int) -> list[dict]:
     return [dict(row) for row in rows]
 
 
+def season_rounds(conn: sqlite3.Connection, season: int) -> list[dict]:
+    """Every round of a season with its winner, in calendar order.
+
+    One query rather than one per round: the round-by-round strip on the home
+    page needs all 24, and 24 requests to render one panel is the N+1 this
+    exists to avoid.
+
+    LEFT JOIN on the winner, not INNER: a race with no position-1 row in the
+    source must still appear in the calendar with a null winner, otherwise the
+    strip would silently show a short season. Every round in the current
+    dataset does have a winner; the join does not assume it.
+    """
+    rows = conn.execute(
+        """
+        SELECT ra.id AS race_id, ra.round, ra.name AS race_name, ra.date,
+               ci.name AS circuit_name, ci.slug AS circuit_slug,
+               d.id  AS winner_driver_id,      d.name AS winner_driver,
+               c.id  AS winner_constructor_id, c.name AS winner_constructor
+        FROM races ra
+        JOIN circuits ci        ON ci.id = ra.circuit_id
+        LEFT JOIN results r     ON r.race_id = ra.id AND r.position = 1
+        LEFT JOIN drivers d     ON d.id = r.driver_id
+        LEFT JOIN constructors c ON c.id = r.constructor_id
+        WHERE ra.season = ?
+        ORDER BY ra.round
+        """,
+        [season],
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
 def circuit_winners(conn: sqlite3.Connection, circuit_id: int) -> list[dict]:
     """Every winner at a circuit, most recent first.
 

@@ -48,6 +48,20 @@ def get_season(season: int, conn: sqlite3.Connection = Depends(get_db)):
     return summary
 
 
+@router.get("/seasons/{season}/rounds", tags=["seasons"])
+def get_season_rounds(season: int, conn: sqlite3.Connection = Depends(get_db)):
+    """Calendar order with each round's winner. Powers the round-by-round strip.
+
+    `winner_driver` is null for a round the source carries no position-1 row
+    for -- the round still appears, rather than the calendar looking shorter
+    than it was.
+    """
+    rounds = analytics.season_rounds(conn, season)
+    if not rounds:
+        raise HTTPException(status_code=404, detail=f"No races recorded for season {season}")
+    return {"season": season, "rounds": rounds}
+
+
 @router.get("/races", response_model=list[schemas.Race], tags=["races"])
 def list_races(
     conn: sqlite3.Connection = Depends(get_db),

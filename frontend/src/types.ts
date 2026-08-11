@@ -91,6 +91,26 @@ export interface RaceResult {
   constructor_name: string;
 }
 
+/** One round of a season with its winner. Winner fields are null when the
+ *  source carries no position-1 row for that race. */
+export interface SeasonRound {
+  race_id: number;
+  round: number;
+  race_name: string;
+  date: string;
+  circuit_name: string;
+  circuit_slug: string;
+  winner_driver_id: number | null;
+  winner_driver: string | null;
+  winner_constructor_id: number | null;
+  winner_constructor: string | null;
+}
+
+export interface SeasonRounds {
+  season: number;
+  rounds: SeasonRound[];
+}
+
 export interface RaceDetail extends Race {
   results: RaceResult[];
 }

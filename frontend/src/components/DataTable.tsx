@@ -7,7 +7,8 @@ export interface Column<T> {
   numeric?: boolean;
   /** Sort key sent to the API. Omit to make the column unsortable. */
   sortKey?: string;
-  render: (row: T) => ReactNode;
+  /** `index` is the row's position on the current page -- used for rank columns. */
+  render: (row: T, index: number) => ReactNode;
 }
 
 /**
@@ -80,11 +81,11 @@ export function DataTable<T>({
           </tr>
         </thead>
         <tbody>
-          {rows.map((row) => (
+          {rows.map((row, index) => (
             <tr key={rowKey(row)}>
               {columns.map((column) => (
                 <td key={column.key} className={column.numeric ? "num" : undefined}>
-                  {column.render(row)}
+                  {column.render(row, index)}
                 </td>
               ))}
             </tr>

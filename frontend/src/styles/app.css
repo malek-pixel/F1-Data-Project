@@ -2,10 +2,9 @@
    one home -- no stacked overrides. */
 
 /* ---------- Shell ---------- */
-
 .shell {
   display: grid;
-  grid-template-columns: 232px 1fr;
+  grid-template-columns: 56px 1fr;
   min-height: 100vh;
 }
 
@@ -26,60 +25,189 @@
   top: 0;
 }
 
-.sidebar {
-  background: var(--surface);
+/* ---------- Icon rail (mockup: 56px, near-black, red active edge) ---------- */
+
+.rail {
+  background: var(--bg);
   border-right: 1px solid var(--border);
-  padding: var(--s5) 0;
+  padding: var(--s3) 0;
+  display: flex;
+  flex-direction: column;
   position: sticky;
   top: 0;
   height: 100vh;
-  overflow-y: auto;
 }
 
-.sidebar__brand {
+.rail__brand {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 0 var(--s5) var(--s5);
+  justify-content: center;
+  width: 56px;
+  height: 40px;
+  margin-bottom: var(--s2);
 }
-.sidebar__brand img {
-  width: 44px;
-  height: 22px;
+.rail__brand img {
+  width: 34px;
+  height: 17px;
   object-fit: cover;
-  object-position: top;
+  object-position: center top;
   border-radius: 4px;
 }
 
-.nav__group {
-  padding: var(--s4) var(--s5) var(--s2);
-  font-size: 10px;
-  letter-spacing: 0.08em;
-  color: var(--text-faint);
+.rail__nav {
+  display: flex;
+  flex-direction: column;
+}
+.rail__spacer {
+  flex: 1;
 }
 
-.nav__link {
-  display: block;
-  padding: 7px var(--s5);
-  font-size: var(--fs-sm);
+.rail__item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 40px;
   color: var(--text-dim);
   border-left: 2px solid transparent;
 }
-.nav__link:hover {
+.rail__item:hover {
   color: var(--text);
-  background: var(--elevated);
+  background: var(--surface);
 }
-/* Active state uses a border AND a colour+weight change -- never colour alone. */
-.nav__link[aria-current="page"] {
+/* Active uses an edge, a background AND a colour change -- never colour alone. */
+.rail__item[aria-current="page"] {
   color: var(--text);
-  font-weight: 600;
+  background: var(--surface);
   border-left-color: var(--accent);
-  background: var(--elevated);
+}
+
+.rail__badge {
+  position: absolute;
+  top: 3px;
+  right: 5px;
+  font-size: 7px;
+  letter-spacing: 0.06em;
+  color: var(--accent-text);
+}
+
+/* ---------- Frame bars ---------- */
+
+.frame {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.bar {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  border-bottom: 1px solid var(--border);
+  padding: var(--s2) var(--s4);
+  min-width: 0;
+}
+
+.bar--provenance {
+  background: var(--bg);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: var(--text-faint);
+  overflow-x: auto;
+  white-space: nowrap;
+}
+.bar__tag {
+  color: var(--accent-text);
+  flex-shrink: 0;
+}
+.bar__scope {
+  color: var(--text-dim);
+}
+.bar__source {
+  flex-shrink: 0;
+}
+.bar__status {
+  margin-left: auto;
+  flex-shrink: 0;
+}
+.bar__status--ok {
+  color: var(--success);
+}
+.bar__status--wait {
+  color: var(--text-faint);
+}
+.bar__status--down {
+  color: var(--accent-text);
+}
+
+.bar--context {
+  background: var(--surface);
+  padding: var(--s3) var(--s4);
+}
+.bar__crumb {
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  flex-shrink: 0;
+}
+.bar__sep {
+  color: var(--text-faint);
+}
+.bar__sub {
+  font-size: 11px;
+  color: var(--text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bar__search {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  flex-shrink: 0;
+  max-width: 340px;
+  padding: 6px 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-faint);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+}
+.bar__search:hover {
+  border-color: var(--text-faint);
+  color: var(--text-dim);
+}
+.bar__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bar__kbd {
+  font-size: 10px;
+  padding: 1px 4px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  flex-shrink: 0;
 }
 
 .main {
   padding: var(--s5) var(--s6) var(--s7);
   max-width: 1600px;
   min-width: 0;
+}
+
+.page-foot {
+  margin-top: var(--s7);
+  padding-top: var(--s4);
+  border-top: 1px solid var(--border);
+  display: flex;
+  gap: var(--s4);
+  flex-wrap: wrap;
+  font-size: 11px;
+  color: var(--text-faint);
 }
 
 /* ---------- Page header ---------- */
@@ -625,50 +753,293 @@ table.data th.num {
   border-bottom-color: var(--accent);
 }
 
+/* ---------- Overview panels (mockup § 02 Home) ----------
+   Hairline-divided cells inside a bordered panel, not floating cards: the
+   mockup's density comes from shared borders, so the rules below use
+   border-right/border-top on cells rather than gaps between them. */
+
+.panel {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  margin-bottom: var(--s5);
+  overflow: hidden;
+}
+.panel--pad {
+  padding: var(--s4) 20px;
+}
+
+.kpi-strip {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+}
+.kpi {
+  padding: var(--s4) 20px;
+  border-right: 1px solid var(--border);
+  min-width: 0;
+}
+.kpi:last-child {
+  border-right: 0;
+}
+.kpi__label {
+  font-size: 11px;
+  color: var(--text-dim);
+  letter-spacing: 0.06em;
+  margin-bottom: 6px;
+}
+.kpi__value-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+.kpi__value {
+  font-size: 28px;
+  font-weight: 600;
+  line-height: 1.1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.kpi__sub {
+  font-size: 13px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.kpi__note {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.note-line {
+  font-size: 13px;
+  color: var(--text-dim);
+  margin: 0 0 var(--s4);
+}
+
+/* Two standings panes sharing one hairline. */
+.split {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  margin-bottom: var(--s5);
+  overflow: hidden;
+}
+.split__pane {
+  border-right: 1px solid var(--border);
+  min-width: 0;
+}
+.split__pane:last-child {
+  border-right: 0;
+}
+
+.pane__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s3);
+  flex-wrap: wrap;
+  padding: var(--s3) 20px;
+  border-bottom: 1px solid var(--border);
+}
+.pane__head--flush {
+  padding: 0 0 14px;
+  border-bottom: 0;
+}
+.pane__title {
+  font-size: 14px;
+  font-weight: 600;
+}
+.pane__meta {
+  font-size: 10px;
+  color: var(--text-faint);
+  letter-spacing: 0.06em;
+}
+
+/* Round-by-round winner strip. */
+.legend {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+.legend__item {
+  font-size: 11px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.legend__swatch {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 5px;
+  vertical-align: middle;
+}
+
+.strip {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  gap: 3px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow-x: auto;
+}
+.strip__cell a {
+  display: block;
+}
+.strip__bar {
+  display: block;
+  height: 26px;
+  border-radius: 2px;
+}
+.strip__cell a:hover .strip__bar {
+  outline: 1px solid var(--text);
+}
+.strip__round {
+  display: block;
+  margin-top: 4px;
+  font-size: 9px;
+  color: var(--text-faint);
+  text-align: center;
+}
+.strip__ends {
+  display: flex;
+  justify-content: space-between;
+  margin-top: var(--s2);
+  font-size: 10px;
+  color: var(--text-faint);
+}
+
+/* Three-cell footer row. */
+.triptych {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  margin-bottom: var(--s5);
+  overflow: hidden;
+}
+.triptych__cell {
+  padding: var(--s4) 20px;
+  border-right: 1px solid var(--border);
+  min-width: 0;
+}
+.triptych__cell:last-child {
+  border-right: 0;
+}
+.triptych__lead {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0 0 6px;
+}
+.triptych__more {
+  display: inline-block;
+  margin-top: var(--s3);
+  font-size: 12px;
+  color: var(--info);
+}
+
+.podium {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.podium li {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s3);
+  padding: 5px 0;
+  border-bottom: 1px solid var(--border);
+  min-width: 0;
+}
+.podium li:last-child {
+  border-bottom: 0;
+}
+.podium__pos {
+  font-size: 12px;
+  color: var(--text-faint);
+  flex-shrink: 0;
+}
+.podium__driver {
+  font-size: 13px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.podium__team {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-faint);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.status-list {
+  margin: 0;
+  font-size: 12px;
+}
+.status-list > div {
+  display: flex;
+  justify-content: space-between;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--border);
+}
+.status-list > div:last-child {
+  border-bottom: 0;
+}
+.status-list dt {
+  color: var(--text-dim);
+}
+.status-list dd {
+  margin: 0;
+}
+
+.badge-wrap {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
 /* ---------- Responsive ----------
-   Desktop-first, as designed. Below 1080px the sidebar becomes a horizontal
-   bar rather than a shrunken column, and dense grids collapse to one column.
-   Tables scroll inside .table-scroll; the page body never scrolls sideways. */
+   The rail is 56 icon-only pixels, so it survives every breakpoint intact --
+   that is the point of a rail, and it is what the mockup's responsive section
+   shows. Only content padding and the bars' secondary text adapt. Tables
+   scroll inside .table-scroll; the page body never scrolls sideways. */
 
 @media (max-width: 1080px) {
-  .shell {
-    grid-template-columns: 1fr;
-  }
-  .sidebar {
-    position: static;
-    height: auto;
-    border-right: 0;
-    border-bottom: 1px solid var(--border);
-    padding: var(--s3) 0;
-    display: flex;
-    align-items: center;
-    gap: var(--s2);
-    overflow-x: auto;
-  }
-  .sidebar__brand {
-    padding: 0 var(--s4);
-    flex-shrink: 0;
-  }
-  .sidebar nav {
-    display: flex;
-    align-items: center;
-  }
-  .nav__group {
-    padding: 0 var(--s2);
-    white-space: nowrap;
-  }
-  .nav__link {
-    border-left: 0;
-    border-bottom: 2px solid transparent;
-    padding: var(--s2) var(--s3);
-    white-space: nowrap;
-  }
-  .nav__link[aria-current="page"] {
-    border-left: 0;
-    border-bottom-color: var(--accent);
-  }
   .main {
     padding: var(--s4);
+  }
+  .bar__sub {
+    display: none;
+  }
+  .kpi-strip {
+    grid-template-columns: repeat(3, 1fr);
+  }
+  .kpi:nth-child(3n) {
+    border-right: 0;
+  }
+  .kpi:nth-child(n + 4) {
+    border-top: 1px solid var(--border);
+  }
+  .split,
+  .triptych {
+    grid-template-columns: 1fr;
+  }
+  .split__pane,
+  .triptych__cell {
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .split__pane:last-child,
+  .triptych__cell:last-child {
+    border-bottom: 0;
   }
 }
 
@@ -683,5 +1054,28 @@ table.data th.num {
   }
   .page-header {
     align-items: flex-start;
+  }
+  .bar__label {
+    display: none;
+  }
+  .bar__search {
+    max-width: none;
+  }
+  .kpi-strip {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .kpi:nth-child(3n) {
+    border-right: 1px solid var(--border);
+  }
+  .kpi:nth-child(2n) {
+    border-right: 0;
+  }
+  .kpi:nth-child(n + 3) {
+    border-top: 1px solid var(--border);
+  }
+  /* 24 rounds cannot be 24 legible columns on a phone: the strip scrolls
+     with a fixed cell width rather than shrinking to slivers. */
+  .strip {
+    grid-auto-columns: 22px;
   }
 }
