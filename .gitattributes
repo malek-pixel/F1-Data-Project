@@ -5,3 +5,9 @@
 # Binary -- never touch line endings.
 *.png binary
 *.db  binary
+
+# Source data: byte-for-byte identical in every checkout, no exceptions.
+# build_meta.source_sha256 hashes these bytes, so line-ending normalisation
+# would make the same commit produce a different database on another platform.
+results.csv           -text
+backend/etl/circuit_map.csv -text
