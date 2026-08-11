@@ -1,8 +1,8 @@
 import { DataTable } from "../components/DataTable";
 import { Link } from "react-router-dom";
-import { Async, Unavailable } from "../components/States";
+import { Async } from "../components/States";
 import { num, pct } from "../components/format";
-import { Badge, PageHeader, SectionTitle } from "../components/ui";
+import { Badge, CellGrid, PageHeader, PaneHead, Panel, PendingCell, SectionTitle } from "../components/ui";
 import { useApi } from "../hooks/useApi";
 import { useCoverage } from "../hooks/useDataset";
 import type { DatasetSummary, Era, Insight, RecordEntry, SeasonRow } from "../types";
@@ -22,25 +22,60 @@ export function Records() {
         results are outside the dataset.
       </p>
       <Async state={state} loadingRows={8}>
-        {(payload) => (
-          <div className="grid grid--2">
-            {payload.records.map((record) => (
-              <div className="card" key={record.record}>
-                <div className="card__label mono">{record.record.toUpperCase()}</div>
-                <div style={{ display: "flex", alignItems: "baseline", gap: 12, flexWrap: "wrap" }}>
-                  <span className="mono" style={{ fontSize: 32, fontWeight: 700 }}>
-                    {record.value < 1 ? `${(record.value * 100).toFixed(1)}%` : num(record.value)}
-                  </span>
-                  <span style={{ fontSize: 16, fontWeight: 600 }}>{record.entity}</span>
-                  {record.context && <Badge>{record.context}</Badge>}
-                </div>
-                <p style={{ fontSize: 12, color: "var(--text-faint)", marginBottom: 0, marginTop: 10 }}>
-                  {record.methodology}
-                </p>
-              </div>
-            ))}
-          </div>
-        )}
+        {(payload) => {
+          /* The mockup groups records into DRIVER / CONSTRUCTOR / CIRCUIT
+             panels. The label the API already carries says which group a
+             record belongs to, so the grouping needs no new field. */
+          // Circuit- and season-scoped records are checked first: their labels
+          // also end in "(driver)", so testing for the entity type alone would
+          // sweep them into the driver group and leave the third panel empty.
+          const scoped = (r: RecordEntry) => /circuit|season/i.test(r.record);
+          const groups: [string, RecordEntry[]][] = [
+            ["DRIVER RECORDS", payload.records.filter((r) => !scoped(r) && r.record.includes("(driver)"))],
+            ["CONSTRUCTOR RECORDS", payload.records.filter((r) => !scoped(r) && r.record.includes("(constructor)"))],
+            ["CIRCUIT & SEASON RECORDS", payload.records.filter(scoped)],
+          ];
+          return (
+            <>
+              {groups.map(([heading, records]) =>
+                records.length === 0 ? null : (
+                  <Panel key={heading}>
+                    <PaneHead title={heading} meta={`${records.length} RECORDS · ${coverage}`} />
+                    <div className="record-grid">
+                      {records.map((record) => (
+                        <div className="record" key={record.record}>
+                          <div className="kpi__label mono">
+                            {record.record.replace(/ \((driver|constructor)\)/, "").toUpperCase()}
+                          </div>
+                          <div className="record__row">
+                            <span className="mono record__value">
+                              {record.value < 1 ? `${(record.value * 100).toFixed(1)}%` : num(record.value)}
+                            </span>
+                            <span className="record__entity">{record.entity}</span>
+                            {record.context && <Badge>{record.context}</Badge>}
+                          </div>
+                          <p className="kpi__note">{record.methodology}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </Panel>
+                ),
+              )}
+
+              {/* The mockup also lists most poles, most WCC titles and
+                  fewest DNFs per race. Each needs a column the source does
+                  not have, so each keeps its slot and says so. */}
+              <Panel>
+                <PaneHead title="RECORDS THIS DATASET CANNOT PRODUCE" meta="WOULD NEED NEW SOURCE COLUMNS" />
+                <CellGrid cols={3}>
+                  <PendingCell label="MOST POLES" why="No qualifying or grid column in the source" />
+                  <PendingCell label="MOST WCC TITLES" why="Titles require a points column" />
+                  <PendingCell label="FEWEST DNFs / RACE" why="No finishing-status column in the source" />
+                </CellGrid>
+              </Panel>
+            </>
+          );
+        }}
       </Async>
     </>
   );
@@ -300,15 +335,57 @@ export function CarLibrary() {
         </p>
       </div>
 
-      <SectionTitle>Fields a car dataset would provide</SectionTitle>
-      <div className="grid grid--kpi">
-        <Unavailable label="CHASSIS" why="No chassis designation column." />
-        <Unavailable label="ENGINE" why="No power-unit column." />
-        <Unavailable label="POWER" why="Not published in a machine-readable public dataset." />
-        <Unavailable label="WEIGHT" why="No car metadata in the dataset." />
-        <Unavailable label="AERO CONFIGURATION" why="No car metadata in the dataset." />
-        <Unavailable label="LAP RECORD" why="No lap-time data in the dataset." />
-      </div>
+      <Panel>
+        <PaneHead title="Fields a car dataset would provide" meta="ALL PENDING — NO CAR SOURCE" />
+        <CellGrid cols={3}>
+          <PendingCell label="CHASSIS" why="No chassis-designation column" />
+          <PendingCell label="CONSTRUCTOR · ENGINE" why="No power-unit column" />
+          <PendingCell label="SEASON" why="Would come with a chassis table" />
+          <PendingCell label="POWER" why="Not published in a machine-readable public dataset" />
+          <PendingCell label="WEIGHT" why="No car metadata in the dataset" />
+          <PendingCell label="AERO CONFIGURATION" why="No car metadata in the dataset" />
+        </CellGrid>
+        <CellGrid cols={3}>
+          <PendingCell label="FASTEST LAPS" why="No fastest-lap column in the source" />
+          <PendingCell label="POINTS" why="No points column in the source" />
+          <PendingCell label="RELIABILITY" why="Needs finishing status; retirements are ranked, not flagged" />
+        </CellGrid>
+      </Panel>
+
+      {/* The mockup's chassis table, with the columns it would carry. It is
+          rendered as an empty table rather than omitted, so the shape of the
+          missing data is visible. */}
+      <Panel>
+        <PaneHead title="Chassis table" meta="0 ROWS — AWAITING A CAR DATASET" />
+        <div className="table-scroll">
+          <table className="data">
+            <caption
+              style={{ position: "absolute", width: 1, height: 1, overflow: "hidden", clip: "rect(0 0 0 0)" }}
+            >
+              Chassis table, empty pending a car dataset
+            </caption>
+            <thead>
+              <tr>
+                {["Chassis", "Constructor · engine", "Season", "Drivers", "W", "Podiums", "Poles", "FL", "Pts", "Reliability"].map(
+                  (header) => (
+                    <th key={header} scope="col">
+                      {header}
+                    </th>
+                  ),
+                )}
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td colSpan={10} className="table-empty">
+                  No chassis rows. The source carries race classifications only — adding a car dataset fills this
+                  table without reshaping any existing one.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </Panel>
 
       <p style={{ fontSize: 12, color: "var(--text-faint)", marginTop: 24, maxWidth: "72ch" }}>
         The database schema is designed so a <code style={{ fontFamily: "var(--mono)" }}>cars</code> table keyed on

@@ -1,4 +1,4 @@
-import { Badge, PageHeader, SectionTitle } from "../components/ui";
+import { Badge, PageHeader, PaneHead, Panel, SectionTitle } from "../components/ui";
 import { useCoverage, useDataset } from "../hooks/useDataset";
 import { useApi } from "../hooks/useApi";
 import { Async } from "../components/States";
@@ -107,26 +107,74 @@ export function Methodology() {
         sub="What every number means, how it is calculated, and what the dataset cannot support."
       />
 
-      <SectionTitle aside="REPRODUCIBLE">Pipeline</SectionTitle>
-      <div className="grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))" }}>
-        {PIPELINE.map((stage, index) => (
-          <div className="card" key={stage.step} style={{ borderColor: index === PIPELINE.length - 1 ? "var(--accent)" : undefined }}>
-            <div
-              className="mono"
-              style={{
-                fontSize: 10,
-                letterSpacing: "0.08em",
-                marginBottom: 6,
-                color: index === PIPELINE.length - 1 ? "var(--accent)" : "var(--info)",
-              }}
-            >
-              {stage.step}
+      {/* Mockup section 12: the pipeline reads as connected steps with arrows
+          between them, not as detached cards. */}
+      <Panel pad>
+        <PaneHead flush title="Data pipeline" meta="REPRODUCIBLE FROM A CLEAN CLONE" />
+        <ol className="pipeline">
+          {PIPELINE.map((stage, index) => (
+            <li className="pipeline__step" key={stage.step}>
+              <div className={`pipeline__card${index === PIPELINE.length - 1 ? " pipeline__card--end" : ""}`}>
+                <div className="mono pipeline__n">{stage.step}</div>
+                <div className="pipeline__title">{stage.title}</div>
+                <div className="pipeline__body">{stage.body}</div>
+              </div>
+              {index < PIPELINE.length - 1 && (
+                <span className="pipeline__arrow mono" aria-hidden="true">
+                  &rarr;
+                </span>
+              )}
+            </li>
+          ))}
+        </ol>
+      </Panel>
+
+      {/* Mockup section 12: field availability by season. The design shows a
+          three-state matrix (present / partial / missing). This dataset has no
+          partial case -- a column is in all 26 seasons or in none -- so the
+          matrix is honest at two states rather than inventing a third. */}
+      <Panel pad>
+        <PaneHead
+          flush
+          title="Field availability by season"
+          meta={`GREEN = PRESENT · RED = ABSENT · ${coverage}`}
+        />
+        <div className="matrix">
+          {(
+            [
+              ["Race classification", true],
+              ["Driver", true],
+              ["Constructor", true],
+              ["Circuit (derived)", true],
+              ["Race date", true],
+              ["Grid position", false],
+              ["Qualifying", false],
+              ["Fastest lap", false],
+              ["Championship points", false],
+              ["Finishing status", false],
+              ["Pit stops", false],
+              ["Lap-by-lap timing", false],
+              ["Sprint results", false],
+              ["Telemetry / tyres", false],
+            ] as [string, boolean][]
+          ).map(([field, present]) => (
+            <div className="matrix__row" key={field}>
+              <div className="matrix__label">{field}</div>
+              {Array.from({ length: (info?.seasons ?? 26) as number }, (_unused, i) => (
+                <div
+                  key={i}
+                  className={`matrix__dot matrix__dot--${present ? "yes" : "no"}`}
+                  title={`${field} · ${(info?.season_from ?? 2000) + i} · ${present ? "present" : "absent"}`}
+                />
+              ))}
             </div>
-            <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>{stage.title}</div>
-            <div style={{ fontSize: 12, color: "var(--text-dim)", lineHeight: 1.45 }}>{stage.body}</div>
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
+        <p className="kpi__note" style={{ marginTop: 12 }}>
+          Availability is uniform across the covered seasons: the source is one CSV with seven columns, so a field
+          is either in every season or in none. Nothing here is partial, and nothing is inferred.
+        </p>
+      </Panel>
 
       <SectionTitle>The one thing to understand first</SectionTitle>
       <div className="card">

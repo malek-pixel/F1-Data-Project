@@ -3,7 +3,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import { DataTable } from "../components/DataTable";
 import { Async } from "../components/States";
 import { dec, num, pct } from "../components/format";
-import { Badge, FilterChip, PageHeader, Pagination, Panel, PaneHead, PendingValue } from "../components/ui";
+import { Badge, FilterChip, PageHeader, Pagination, Panel, PaneHead, PendingValue, Segmented } from "../components/ui";
 import { useApi, useDebounced } from "../hooks/useApi";
 import { useCoverage } from "../hooks/useDataset";
 import { qs } from "../services/api";
@@ -37,6 +37,10 @@ export function EntityLibrary({
   // The text input stays local so typing is not throttled by history writes;
   // the debounced value is what reaches the URL and the API.
   const [search, setSearch] = useState(urlSearch);
+  // The mockup has both an explorer table (section 03/04) and a library
+  // gallery (section 06/07) over the same entities. One toggle, not two
+  // routes: the data and every filter are identical, only the shape differs.
+  const [view, setView] = useState<"table" | "gallery">("table");
 
   const coverage = useCoverage();
   const debounced = useDebounced(search);
@@ -109,6 +113,18 @@ export function EntityLibrary({
             <option value={100}>100+</option>
           </select>
         </div>
+        <div className="field">
+          <label htmlFor="lib-view">VIEW</label>
+          <Segmented
+            label={`${title} view`}
+            active={view}
+            onChange={setView}
+            options={[
+              { id: "table", label: "Table" },
+              { id: "gallery", label: "Gallery" },
+            ]}
+          />
+        </div>
       </div>
 
       {minEntries === 1 && (sort === "win_rate" || sort === "podium_rate" || sort === "avg_position") && (
@@ -144,6 +160,43 @@ export function EntityLibrary({
                   </button>
                 </div>
               )}
+              {view === "gallery" ? (
+                <div className="gallery">
+                  {page.items.map((row, i) => (
+                    <Link key={row.id} to={`/${kind}/${row.id}`} className="gallery__card">
+                      {/* The mockup shows a driver portrait / team livery here.
+                          No image set ships with this dataset, so the frame
+                          stays and states that rather than showing a stock
+                          photo or an invented livery. */}
+                      <div className="gallery__media mono">
+                        {kind === "drivers" ? "PORTRAIT" : "LIVERY"}
+                        <span>to be added</span>
+                      </div>
+                      <div className="gallery__rank mono">
+                        {String(page.offset + i + 1).padStart(2, "0")}
+                      </div>
+                      <div className="gallery__name">{row.name}</div>
+                      <div className="gallery__stats mono">
+                        <span>
+                          W <strong>{num(row.wins)}</strong>
+                        </span>
+                        <span>
+                          P <strong>{num(row.podiums)}</strong>
+                        </span>
+                        <span>
+                          S <strong>{num(row.entries)}</strong>
+                        </span>
+                        <span className="pending" title="Titles require a points column">
+                          WDC —
+                        </span>
+                      </div>
+                    </Link>
+                  ))}
+                  {page.items.length === 0 && (
+                    <p className="table-empty">No {kind} match these filters.</p>
+                  )}
+                </div>
+              ) : (
               <DataTable
                 caption={`${title} ranked by ${sort}`}
                 rows={page.items}
@@ -221,6 +274,7 @@ export function EntityLibrary({
                   },
                 ]}
               />
+              )}
             </Panel>
             <Pagination total={page.total} limit={page.limit} offset={page.offset} onChange={setOffset} />
             <p style={{ fontSize: 12, color: "var(--text-faint)" }}>

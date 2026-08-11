@@ -10,10 +10,19 @@ from ..db import get_db
 
 router = APIRouter()
 
+# The winner rides along with every race row: the race table shows it, and a
+# request per race to fill one column is the N+1 this avoids. LEFT JOIN, so a
+# race with no recorded position-1 row still appears.
 RACE_SELECT = """
     SELECT ra.id, ra.season, ra.round, ra.name, ra.date,
-           ra.circuit_id, ci.name AS circuit_name, ci.slug AS circuit_slug
-    FROM races ra JOIN circuits ci ON ci.id = ra.circuit_id
+           ra.circuit_id, ci.name AS circuit_name, ci.slug AS circuit_slug,
+           d.id AS winner_driver_id, d.name AS winner_driver,
+           c.id AS winner_constructor_id, c.name AS winner_constructor
+    FROM races ra
+    JOIN circuits ci        ON ci.id = ra.circuit_id
+    LEFT JOIN results r     ON r.race_id = ra.id AND r.position = 1
+    LEFT JOIN drivers d     ON d.id = r.driver_id
+    LEFT JOIN constructors c ON c.id = r.constructor_id
 """
 
 

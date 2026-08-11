@@ -1226,6 +1226,206 @@ table.data th.num {
   font-size: 11px;
 }
 
+/* Year chips (season index). */
+.year-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(92px, 1fr));
+  gap: var(--s2);
+}
+.year-chip {
+  display: block;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+}
+.year-chip:hover {
+  border-color: var(--accent);
+  background: var(--elevated);
+}
+.year-chip__yr {
+  display: block;
+  font-size: 15px;
+  font-weight: 600;
+}
+.year-chip__n {
+  display: block;
+  margin-top: 2px;
+  font-size: 10px;
+  color: var(--text-faint);
+}
+
+/* Comparison rows the dataset cannot fill. */
+.pending-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.pending-rows li {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: var(--s3);
+  padding: 5px 0;
+  font-size: 12px;
+}
+.pending-rows li > :first-child {
+  text-align: right;
+}
+.pending-rows__label {
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+
+/* Record cards inside a grouped panel. */
+.record-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+}
+.record {
+  padding: var(--s4) 20px;
+  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  min-width: 0;
+}
+.record__row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s3);
+  flex-wrap: wrap;
+}
+.record__value {
+  font-size: 28px;
+  font-weight: 700;
+}
+.record__entity {
+  font-size: 15px;
+  font-weight: 600;
+}
+.table-empty {
+  padding: var(--s5) 20px;
+  text-align: center;
+  color: var(--text-faint);
+  font-size: 13px;
+}
+
+/* Pipeline: connected steps, arrows between. */
+.pipeline {
+  display: flex;
+  align-items: stretch;
+  gap: var(--s2);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow-x: auto;
+}
+.pipeline__step {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  flex: 1;
+  min-width: 170px;
+}
+.pipeline__card {
+  flex: 1;
+  padding: var(--s3) var(--s4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  height: 100%;
+}
+.pipeline__card--end {
+  border-color: var(--accent);
+}
+.pipeline__n {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: var(--info);
+  margin-bottom: 6px;
+}
+.pipeline__card--end .pipeline__n {
+  color: var(--accent-text);
+}
+.pipeline__title {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+.pipeline__body {
+  font-size: 12px;
+  color: var(--text-dim);
+  line-height: 1.45;
+}
+.pipeline__arrow {
+  color: var(--text-faint);
+  flex-shrink: 0;
+}
+
+/* Library gallery (mockup sections 06 / 07). */
+.gallery {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+}
+.gallery__card {
+  display: block;
+  padding: var(--s4);
+  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  min-width: 0;
+}
+.gallery__card:hover {
+  background: var(--elevated);
+}
+.gallery__media {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  aspect-ratio: 4 / 3;
+  margin-bottom: var(--s3);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: var(--text-faint);
+  background: repeating-linear-gradient(
+    135deg,
+    transparent,
+    transparent 6px,
+    rgba(170, 180, 194, 0.035) 6px,
+    rgba(170, 180, 194, 0.035) 12px
+  );
+}
+.gallery__media span {
+  font-size: 9px;
+  letter-spacing: 0.04em;
+}
+.gallery__rank {
+  font-size: 10px;
+  color: var(--text-faint);
+}
+.gallery__name {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 2px 0 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gallery__stats {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+.gallery__stats strong {
+  color: var(--text);
+}
+
 /* ---------- Responsive ----------
    The rail is 56 icon-only pixels, so it survives every breakpoint intact --
    that is the point of a rail, and it is what the mockup's responsive section

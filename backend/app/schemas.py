@@ -75,6 +75,12 @@ class Race(BaseModel):
     circuit_id: int
     circuit_name: str
     circuit_slug: str
+    winner_driver_id: int | None = None
+    winner_driver: str | None = Field(
+        default=None, description="Null when the source carries no position-1 row for this race."
+    )
+    winner_constructor_id: int | None = None
+    winner_constructor: str | None = None
 
 
 class RaceResult(BaseModel):

@@ -3,7 +3,7 @@ import { useSearchParams } from "react-router-dom";
 import { ComparisonBar } from "../charts/ContributionChart";
 import { Async, EmptyState } from "../components/States";
 import { dec, num, pct, seasonSpan } from "../components/format";
-import { Badge, PageHeader, SectionTitle, Tabs } from "../components/ui";
+import { Badge, PageHeader, Panel, PaneHead, PendingValue, SectionTitle, Tabs } from "../components/ui";
 import { useApi, useDebounced } from "../hooks/useApi";
 import { useCoverage } from "../hooks/useDataset";
 import { qs } from "../services/api";
@@ -97,8 +97,9 @@ function EntityPicker({
  */
 function StatsColumns({ left, right, title }: { left: Stats; right: Stats; title: string }) {
   return (
-    <div className="card">
-      <div className="card__label mono">{title}</div>
+    <Panel>
+      <PaneHead title={title} meta="LEFT vs RIGHT" />
+      <div className="panel--pad">
 
       <div className="mono" style={{ fontSize: 10, letterSpacing: "0.08em", color: "var(--text-faint)", margin: "4px 0 10px" }}>
         RAW TOTALS · SENSITIVE TO CAREER LENGTH
@@ -146,7 +147,41 @@ function StatsColumns({ left, right, title }: { left: Stats; right: Stats; title
         format={(v) => (v === null ? "—" : `P${v}`)}
         lowerIsBetter
       />
-    </div>
+
+      {/* The mockup compares poles, points, points-per-start, DNFs and titles
+          as well. None has a source column, so each keeps its row and says so
+          rather than vanishing from the comparison. */}
+      <div
+        className="mono"
+        style={{
+          fontSize: 10,
+          letterSpacing: "0.08em",
+          color: "var(--text-faint)",
+          margin: "16px 0 10px",
+          paddingTop: 12,
+          borderTop: "1px solid var(--border)",
+        }}
+      >
+        NOT COMPARABLE — NO SOURCE COLUMN
+      </div>
+      <ul className="pending-rows mono">
+        {[
+          ["POLES", "no qualifying data"],
+          ["POINTS", "no points column"],
+          ["POINTS / START", "no points column"],
+          ["FINISH RATE", "no finishing-status column"],
+          ["DNFs", "no finishing-status column"],
+          ["TITLES", "titles require points"],
+        ].map(([label, why]) => (
+          <li key={label}>
+            <PendingValue title={why} />
+            <span className="pending-rows__label">{label}</span>
+            <PendingValue title={why} />
+          </li>
+        ))}
+      </ul>
+      </div>
+    </Panel>
   );
 }
 
@@ -254,7 +289,7 @@ export function Compare() {
               <SectionTitle aside={`${comparison.left_name} vs ${comparison.right_name}`}>Career totals</SectionTitle>
 
               {/* The caveat sits above the numbers, not in a footnote below them. */}
-              <div className="card" style={{ marginBottom: 16 }}>
+              <Panel pad>
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 8 }}>
                   <Badge tone={comparison.comparable ? "info" : "warning"}>
                     {comparison.comparable ? "Comparable sample" : "Read with caution"}
@@ -266,7 +301,7 @@ export function Compare() {
                   </span>
                 </div>
                 <p style={{ fontSize: 13, color: "var(--text-dim)", margin: 0 }}>{comparison.methodology}</p>
-              </div>
+              </Panel>
 
               <div className="chart__legend" style={{ marginBottom: 12 }}>
                 <span>

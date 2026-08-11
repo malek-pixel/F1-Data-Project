@@ -84,6 +84,11 @@ export interface Race {
   circuit_id: number;
   circuit_name: string;
   circuit_slug: string;
+  /** Null when the source carries no position-1 row for this race. */
+  winner_driver_id: number | null;
+  winner_driver: string | null;
+  winner_constructor_id: number | null;
+  winner_constructor: string | null;
 }
 
 export interface RaceResult {
