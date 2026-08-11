@@ -135,3 +135,144 @@ export function Pagination({
   );
 }
 
+/* --------------------------------------------------------------------------
+   Mockup layout primitives
+   --------------------------------------------------------------------------
+   The design (`design/F1 Dashboard.dc.html`) builds every screen from the same
+   four shapes: a bordered panel, a hairline-divided head, a cell grid, and a
+   pending slot for a field the dataset does not carry yet. Defining them once
+   is what keeps fifteen screens looking like one product.
+   ------------------------------------------------------------------------ */
+
+/** Bordered surface. `pad` for prose panels; omit for panels holding a grid. */
+export function Panel({
+  children,
+  pad,
+  className = "",
+}: {
+  children: ReactNode;
+  pad?: boolean;
+  className?: string;
+}) {
+  return <div className={`panel${pad ? " panel--pad" : ""} ${className}`.trim()}>{children}</div>;
+}
+
+/** Panel header: title left, meta right, hairline under. */
+export function PaneHead({ title, meta, flush }: { title: ReactNode; meta?: ReactNode; flush?: boolean }) {
+  return (
+    <div className={`pane__head${flush ? " pane__head--flush" : ""}`}>
+      <span className="pane__title">{title}</span>
+      {meta && <span className="pane__meta mono">{meta}</span>}
+    </div>
+  );
+}
+
+/** Equal-width cell grid with shared hairlines, as used by every KPI strip. */
+export function CellGrid({ cols, children }: { cols: number; children: ReactNode }) {
+  return (
+    <div className="kpi-strip" style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}>
+      {children}
+    </div>
+  );
+}
+
+/** One measured cell. Matches the mockup's 11px label / 28px value pairing. */
+export function Cell({
+  label,
+  value,
+  sub,
+  note,
+  tone,
+}: {
+  label: string;
+  value: ReactNode;
+  sub?: string;
+  note?: ReactNode;
+  tone?: "warning";
+}) {
+  return (
+    <div className="kpi">
+      <div className="kpi__label mono">{label}</div>
+      <div className="kpi__value-row">
+        <div className="kpi__value mono" style={tone === "warning" ? { color: "var(--warning)" } : undefined}>
+          {value}
+        </div>
+        {sub && <div className="kpi__sub mono">{sub}</div>}
+      </div>
+      {note && <div className="kpi__note">{note}</div>}
+    </div>
+  );
+}
+
+/**
+ * A field the mockup shows and the dataset does not carry.
+ *
+ * Rendered in place, keeping the cell's shape, rather than dropped: a reader
+ * should see that the field was designed for and is genuinely absent, not
+ * silently missing. `why` names the column that would supply it, so "to be
+ * added" is a statement about the source and not a shrug.
+ */
+export function PendingCell({ label, why }: { label: string; why: string }) {
+  return (
+    <div className="kpi kpi--pending">
+      <div className="kpi__label mono">{label}</div>
+      <div className="kpi__value-row">
+        <div className="kpi__value mono kpi__value--pending">—</div>
+        <div className="kpi__sub mono">to be added</div>
+      </div>
+      <div className="kpi__note">{why}</div>
+    </div>
+  );
+}
+
+/** Inline "not in the dataset" marker for table cells. */
+export function PendingValue({ title }: { title?: string }) {
+  return (
+    <span className="pending mono" title={title ?? "Not in the dataset yet"}>
+      —
+    </span>
+  );
+}
+
+/** Removable filter chip, as in the mockup's active-filter rows. */
+export function FilterChip({ label, onClear }: { label: string; onClear?: () => void }) {
+  return (
+    <span className="chip mono">
+      {label}
+      {onClear && (
+        <button className="chip__x" onClick={onClear} aria-label={`Clear filter ${label}`}>
+          ×
+        </button>
+      )}
+    </span>
+  );
+}
+
+/** Horizontal segmented control (the mockup's Table/Grid, All/Active toggles). */
+export function Segmented<T extends string>({
+  options,
+  active,
+  onChange,
+  label,
+}: {
+  options: { id: T; label: string }[];
+  active: T;
+  onChange: (id: T) => void;
+  label: string;
+}) {
+  return (
+    <div className="segmented" role="tablist" aria-label={label}>
+      {options.map((option) => (
+        <button
+          key={option.id}
+          role="tab"
+          aria-selected={active === option.id}
+          className="segmented__btn"
+          onClick={() => onChange(option.id)}
+        >
+          {option.label}
+        </button>
+      ))}
+    </div>
+  );
+}

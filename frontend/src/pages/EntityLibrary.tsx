@@ -3,7 +3,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import { DataTable } from "../components/DataTable";
 import { Async } from "../components/States";
 import { dec, num, pct } from "../components/format";
-import { Badge, PageHeader, Pagination } from "../components/ui";
+import { Badge, FilterChip, PageHeader, Pagination, Panel, PaneHead, PendingValue } from "../components/ui";
 import { useApi, useDebounced } from "../hooks/useApi";
 import { useCoverage } from "../hooks/useDataset";
 import { qs } from "../services/api";
@@ -121,56 +121,111 @@ export function EntityLibrary({
       <Async state={state} loadingRows={8}>
         {(page) => (
           <>
-            <DataTable
-              caption={`${title} ranked by ${sort}`}
-              rows={page.items}
-              rowKey={(row) => row.id}
-              sort={sort}
-              onSort={setSort}
-              emptyMessage={
-                debounced
-                  ? `No ${kind} match “${debounced}” with these filters.`
-                  : `No ${kind} match these filters.`
-              }
-              columns={[
-                {
-                  key: "name",
-                  header: "Name",
-                  sortKey: "name",
-                  render: (row) => (
-                    <Link to={`/${kind}/${row.id}`} style={{ fontWeight: 500 }}>
-                      {row.name}
-                    </Link>
-                  ),
-                },
-                { key: "entries", header: "Entries", numeric: true, sortKey: "entries", render: (r) => num(r.entries) },
-                { key: "wins", header: "Wins", numeric: true, sortKey: "wins", render: (r) => num(r.wins) },
-                { key: "podiums", header: "Podiums", numeric: true, sortKey: "podiums", render: (r) => num(r.podiums) },
-                {
-                  key: "win_rate",
-                  header: "Win rate",
-                  numeric: true,
-                  sortKey: "win_rate",
-                  render: (r) => (
-                    <span style={r.rates_reliable ? undefined : { color: "var(--warning)" }}
-                      title={r.rates_reliable ? undefined : `Small sample: ${r.entries} entries`}>
-                      {pct(r.win_rate)}
-                      {!r.rates_reliable && <span aria-label=" (small sample)"> *</span>}
-                    </span>
-                  ),
-                },
-                {
-                  key: "avg",
-                  header: "Avg class. pos",
-                  numeric: true,
-                  sortKey: "avg_position",
-                  render: (r) => dec(r.avg_classified_position),
-                },
-              ]}
-            />
+            <Panel>
+              <PaneHead
+                title={`${title} · ${page.total.toLocaleString()} rows`}
+                meta={`SCOPE ${coverage} · SORTED BY ${sort.replace("_", " ").toUpperCase()}`}
+              />
+              {(debounced || minEntries > 1) && (
+                <div className="filter-row">
+                  <span className="mono filter-row__label">ACTIVE</span>
+                  {debounced && <FilterChip label={`name: ${debounced}`} onClear={() => onSearch("")} />}
+                  {minEntries > 1 && (
+                    <FilterChip label={`min entries: ${minEntries}`} onClear={() => setMinEntries(1)} />
+                  )}
+                  <button
+                    className="chip__clear mono"
+                    onClick={() => {
+                      onSearch("");
+                      setMinEntries(1);
+                    }}
+                  >
+                    Clear all
+                  </button>
+                </div>
+              )}
+              <DataTable
+                caption={`${title} ranked by ${sort}`}
+                rows={page.items}
+                rowKey={(row) => row.id}
+                sort={sort}
+                onSort={setSort}
+                emptyMessage={
+                  debounced
+                    ? `No ${kind} match “${debounced}” with these filters.`
+                    : `No ${kind} match these filters.`
+                }
+                columns={[
+                  {
+                    key: "rank",
+                    header: "#",
+                    numeric: true,
+                    render: (_r, i) => <span className="mono rank">{String(page.offset + i + 1).padStart(2, "0")}</span>,
+                  },
+                  {
+                    key: "name",
+                    header: kind === "drivers" ? "Driver" : "Constructor",
+                    sortKey: "name",
+                    render: (row) => (
+                      <Link to={`/${kind}/${row.id}`} style={{ fontWeight: 500 }}>
+                        {row.name}
+                      </Link>
+                    ),
+                  },
+                  /* The mockup carries nationality (drivers) and base (teams).
+                     Neither is in the seven source columns, so the column stays
+                     and says so rather than disappearing from the design. */
+                  {
+                    key: "meta",
+                    header: kind === "drivers" ? "Nat" : "Base",
+                    render: () => (
+                      <PendingValue
+                        title={
+                          kind === "drivers"
+                            ? "Nationality is not in results.csv -- Ergast drivers.csv would supply it"
+                            : "Team base is not in results.csv -- Ergast constructors.csv would supply it"
+                        }
+                      />
+                    ),
+                  },
+                  { key: "entries", header: "Starts", numeric: true, sortKey: "entries", render: (r) => num(r.entries) },
+                  { key: "wins", header: "Wins", numeric: true, sortKey: "wins", render: (r) => num(r.wins) },
+                  { key: "podiums", header: "Pods", numeric: true, sortKey: "podiums", render: (r) => num(r.podiums) },
+                  {
+                    key: "win_rate",
+                    header: "Win rate",
+                    numeric: true,
+                    sortKey: "win_rate",
+                    render: (r) => (
+                      <span
+                        style={r.rates_reliable ? undefined : { color: "var(--warning)" }}
+                        title={r.rates_reliable ? undefined : `Small sample: ${r.entries} entries`}
+                      >
+                        {pct(r.win_rate)}
+                        {!r.rates_reliable && <span aria-label=" (small sample)"> *</span>}
+                      </span>
+                    ),
+                  },
+                  {
+                    key: "avg",
+                    header: "Avg P",
+                    numeric: true,
+                    sortKey: "avg_position",
+                    render: (r) => dec(r.avg_classified_position),
+                  },
+                  {
+                    key: "titles",
+                    header: kind === "drivers" ? "Titles" : "Titles",
+                    numeric: true,
+                    render: () => <PendingValue title="Championship titles need a points column; results.csv has none" />,
+                  },
+                ]}
+              />
+            </Panel>
             <Pagination total={page.total} limit={page.limit} offset={page.offset} onChange={setOffset} />
             <p style={{ fontSize: 12, color: "var(--text-faint)" }}>
-              * fewer than 10 entries — rate shown but not comparable.
+              * fewer than 10 entries — rate shown but not comparable. Columns marked “— to be
+              added” need source columns the dataset does not have yet.
             </p>
           </>
         )}

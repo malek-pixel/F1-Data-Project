@@ -1,10 +1,9 @@
 import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { DataTable } from "../components/DataTable";
-import { StatBlock } from "../components/StatBlock";
 import { Async, EmptyState } from "../components/States";
 import { dec, num } from "../components/format";
-import { Badge, PageHeader, SectionTitle } from "../components/ui";
+import { Badge, Cell, CellGrid, PageHeader, Panel, PaneHead, PendingCell, PendingValue, SectionTitle, Segmented } from "../components/ui";
 import { useApi, useDebounced } from "../hooks/useApi";
 import { useCoverage, useDataset } from "../hooks/useDataset";
 import { qs } from "../services/api";
@@ -105,6 +104,7 @@ export function CircuitLibrary() {
   const info = useDataset();
   const coverage = useCoverage();
   const [search, setSearch] = useState("");
+  const [view, setView] = useState<"table" | "grid">("table");
   const debounced = useDebounced(search);
   const state = useApi<Circuit[]>(`/circuits${qs({ search: debounced })}`);
 
@@ -129,6 +129,18 @@ export function CircuitLibrary() {
             style={{ minWidth: 260 }}
           />
         </div>
+        <div className="field">
+          <label htmlFor="circuit-view">VIEW</label>
+          <Segmented
+            label="Circuit view"
+            active={view}
+            onChange={setView}
+            options={[
+              { id: "table", label: "Table" },
+              { id: "grid", label: "Grid" },
+            ]}
+          />
+        </div>
       </div>
 
       <Async
@@ -136,22 +148,93 @@ export function CircuitLibrary() {
         loadingRows={8}
         empty={{ title: "No circuits found", body: `Nothing matches “${debounced}”. Try a country name.` }}
       >
-        {(circuits) => (
-          <div className="grid" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))" }}>
-            {circuits.map((circuit) => (
-              <Link key={circuit.id} to={`/circuits/${circuit.id}`} className="card" style={{ padding: 16 }}>
-                <TrackMap circuit={circuit} />
-                <div style={{ marginTop: 12, fontWeight: 600, fontSize: 15 }}>{circuit.name}</div>
-                <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 6 }}>
-                  <span className="mono" style={{ fontSize: 11, color: "var(--text-dim)" }}>
-                    {circuit.country.toUpperCase()}
-                  </span>
-                  {!circuit.has_map && <Badge tone="warning">No map</Badge>}
-                </div>
-              </Link>
-            ))}
-          </div>
-        )}
+        {(circuits) =>
+          view === "grid" ? (
+            <div className="grid" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))" }}>
+              {circuits.map((circuit) => (
+                <Link key={circuit.id} to={`/circuits/${circuit.id}`} className="card" style={{ padding: 16 }}>
+                  <TrackMap circuit={circuit} />
+                  <div style={{ marginTop: 12, fontWeight: 600, fontSize: 15 }}>{circuit.name}</div>
+                  <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 6 }}>
+                    <span className="mono" style={{ fontSize: 11, color: "var(--text-dim)" }}>
+                      {circuit.country.toUpperCase()} · {circuit.races} races
+                    </span>
+                    {!circuit.has_map && <Badge tone="warning">No map</Badge>}
+                  </div>
+                </Link>
+              ))}
+            </div>
+          ) : (
+            <Panel>
+              <PaneHead
+                title={`Circuits · ${circuits.length} rows`}
+                meta={`SCOPE ${coverage} · IDENTITY DERIVED FROM RACE NAME`}
+              />
+              <DataTable
+                caption="Circuits in the dataset"
+                rows={circuits}
+                rowKey={(row) => row.id}
+                emptyMessage={`No circuits match “${debounced}”.`}
+                columns={[
+                  {
+                    key: "rank",
+                    header: "#",
+                    numeric: true,
+                    render: (_r, i) => <span className="mono rank">{String(i + 1).padStart(2, "0")}</span>,
+                  },
+                  {
+                    key: "name",
+                    header: "Circuit",
+                    render: (r) => (
+                      <Link to={`/circuits/${r.id}`} style={{ fontWeight: 500 }}>
+                        {r.name}
+                      </Link>
+                    ),
+                  },
+                  {
+                    key: "ctry",
+                    header: "Ctry",
+                    render: (r) => <span className="mono">{r.country.toUpperCase()}</span>,
+                  },
+                  {
+                    key: "length",
+                    header: "Length",
+                    numeric: true,
+                    render: () => <PendingValue title="No circuit-length column in the source" />,
+                  },
+                  { key: "races", header: "Races", numeric: true, render: (r) => num(r.races) },
+                  {
+                    key: "most",
+                    header: "Most wins",
+                    render: (r) =>
+                      r.top_winner ? (
+                        <>
+                          {r.top_winner}{" "}
+                          <span className="mono" style={{ color: "var(--text-faint)", fontSize: 11 }}>
+                            {r.top_winner_wins} {r.top_winner_wins === 1 ? "win" : "wins"}
+                          </span>
+                        </>
+                      ) : (
+                        <PendingValue title="No recorded winner here" />
+                      ),
+                  },
+                  {
+                    key: "map",
+                    header: "Map",
+                    render: (r) =>
+                      r.has_map ? (
+                        <span className="mono" style={{ color: "var(--success)" }}>
+                          svg
+                        </span>
+                      ) : (
+                        <PendingValue title="No track-map SVG ships for this circuit" />
+                      ),
+                  },
+                ]}
+              />
+            </Panel>
+          )
+        }
       </Async>
     </>
   );
@@ -165,17 +248,53 @@ export function CircuitDetail() {
     <Async state={state} loadingRows={6}>
       {(circuit) => (
         <>
-          <PageHeader eyebrow="CIRCUIT" title={circuit.name} sub={circuit.country} />
+          {/* Mockup section 05: masthead, track map, measured strip. The
+              design's LENGTH, LAPS, CORNERS and FIRST GP cells hold their
+              place and state that the source cannot fill them. */}
+          <Panel>
+            <div className="entity-head">
+              <div>
+                <div className="entity-head__eyebrow mono">CIRCUIT · {circuit.country.toUpperCase()}</div>
+                <h1 className="entity-head__name">{circuit.name}</h1>
+                <div className="entity-head__sub">
+                  {circuit.races} races in dataset · identity derived from race name
+                </div>
+              </div>
+            </div>
 
-          <div className="grid grid--split">
-            <TrackMap circuit={circuit} />
-            <div>
-              <StatBlock stats={circuit.stats} entryNoun="entries" />
-              <p style={{ fontSize: 13, color: "var(--text-dim)" }}>
+            <div className="grid grid--split" style={{ padding: "16px 20px", margin: 0 }}>
+              <TrackMap circuit={circuit} />
+              <p style={{ fontSize: 13, color: "var(--text-dim)", margin: 0 }}>
                 Stats aggregate every classification recorded at this circuit across all seasons it hosted a race.
               </p>
             </div>
-          </div>
+
+            <CellGrid cols={5}>
+              <Cell label="RACES" value={num(circuit.races)} />
+              <Cell label="ENTRIES" value={num(circuit.stats.entries)} note="Classifications here" />
+              <Cell
+                label="AVG CLASSIFIED POS"
+                value={dec(circuit.stats.avg_classified_position)}
+                note="Across all entries here"
+              />
+              <Cell
+                label="WINNERS"
+                value={num(new Set(circuit.winners.map((w) => w.driver_id)).size)}
+                note="Distinct race winners"
+              />
+              <Cell
+                label="FIRST IN DATASET"
+                value={circuit.winners.length ? String(Math.min(...circuit.winners.map((w) => w.season))) : "—"}
+                note="Coverage starts in 2000"
+              />
+            </CellGrid>
+            <CellGrid cols={4}>
+              <PendingCell label="LENGTH" why="No circuit-length column in the source" />
+              <PendingCell label="LAPS" why="No lap-count column in the source" />
+              <PendingCell label="CORNERS" why="No layout data in the source" />
+              <PendingCell label="FIRST GP" why="Coverage begins in 2000; earlier races are outside the dataset" />
+            </CellGrid>
+          </Panel>
 
           <SectionTitle>Most successful here</SectionTitle>
           <div className="grid grid--2">

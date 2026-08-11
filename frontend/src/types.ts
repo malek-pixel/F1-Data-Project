@@ -53,6 +53,9 @@ export interface Circuit {
   name: string;
   country: string;
   has_map: boolean;
+  races: number;
+  top_winner: string | null;
+  top_winner_wins: number | null;
 }
 
 export interface CircuitDetail extends Circuit {

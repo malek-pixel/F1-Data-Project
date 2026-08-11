@@ -3,11 +3,10 @@ import { Link, useParams } from "react-router-dom";
 import { AvgPositionBySeason, WinsBySeason } from "../charts/SeasonCharts";
 import { DriverContributionChart } from "../charts/ContributionChart";
 import { DataTable } from "../components/DataTable";
-import { StatBlock } from "../components/StatBlock";
 import { ConsistencySection } from "../components/Consistency";
 import { Async, Unavailable } from "../components/States";
 import { dec, num, pct, seasonSpan } from "../components/format";
-import { Badge, PageHeader, SectionTitle, Tabs } from "../components/ui";
+import { Badge, Cell, CellGrid, Panel, PendingCell, SectionTitle, Tabs } from "../components/ui";
 import { useApi } from "../hooks/useApi";
 import { useCoverage } from "../hooks/useDataset";
 import { qs } from "../services/api";
@@ -30,13 +29,47 @@ export function ConstructorDetail() {
     <Async state={detail} loadingRows={6}>
       {(team) => (
         <>
-          <PageHeader
-            eyebrow="CONSTRUCTOR"
-            title={team.name}
-            sub={`${seasonSpan(team.seasons.map((s) => s.season))} · ${team.seasons.length} seasons in dataset`}
-          />
+          {/* Mockup § 04: masthead plus a measured strip. The design's
+              POINTS, TITLES, BASE and LIVERY cells keep their place and state
+              that the source cannot fill them. */}
+          <Panel>
+            <div className="entity-head">
+              <div>
+                <div className="entity-head__eyebrow mono">CONSTRUCTOR</div>
+                <h1 className="entity-head__name">{team.name}</h1>
+                <div className="entity-head__sub">
+                  {seasonSpan(team.seasons.map((s) => s.season))} · {team.seasons.length} seasons in dataset
+                </div>
+              </div>
+              <div className="entity-head__actions">
+                <Link className="btn" to={`/compare?kind=constructors&left=${team.id}`}>
+                  Compare
+                </Link>
+              </div>
+            </div>
 
-          <StatBlock stats={team.stats} />
+            <CellGrid cols={6}>
+              <Cell label="ENTRIES" value={num(team.stats.entries)} note="Car-races, not races" />
+              <Cell label="WINS" value={num(team.stats.wins)} />
+              <Cell label="PODIUMS" value={num(team.stats.podiums)} note="Classified P1–P3" />
+              <Cell label="WIN RATE" value={pct(team.stats.win_rate)} note="wins / entries" />
+              <Cell
+                label="AVG CLASSIFIED POS"
+                value={dec(team.stats.avg_classified_position)}
+                note="Incl. retirements"
+              />
+              <Cell
+                label="BEST CLASSIFIED POS"
+                value={team.stats.best_classified_position ? `P${team.stats.best_classified_position}` : "—"}
+              />
+            </CellGrid>
+            <CellGrid cols={4}>
+              <PendingCell label="POINTS" why="No points column in results.csv" />
+              <PendingCell label="WCC TITLES" why="Titles require points; the source has none" />
+              <PendingCell label="BASE" why="Needs Ergast constructors.csv" />
+              <PendingCell label="LIVERY" why="No livery or colour data in the source" />
+            </CellGrid>
+          </Panel>
 
           <SectionTitle aside={coverage}>Performance over time</SectionTitle>
           <div className="grid grid--2">

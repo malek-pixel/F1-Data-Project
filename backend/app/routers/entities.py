@@ -127,12 +127,38 @@ def list_circuits(
     conn: sqlite3.Connection = Depends(get_db),
     search: str | None = Query(None, max_length=100),
 ):
-    sql = "SELECT id, slug, name, country, has_map FROM circuits"
+    # Race count and leading winner come with the list so the circuit table can
+    # be rendered from one request. Both are indexed lookups over 39 rows; the
+    # alternative was a request per circuit to fill one column.
+    sql = """
+        SELECT c.id, c.slug, c.name, c.country, c.has_map,
+               (SELECT COUNT(*) FROM races ra WHERE ra.circuit_id = c.id) AS races,
+               (
+                 SELECT d.name
+                 FROM results r
+                 JOIN races ra2 ON ra2.id = r.race_id
+                 JOIN drivers d ON d.id = r.driver_id
+                 WHERE ra2.circuit_id = c.id AND r.position = 1
+                 GROUP BY d.id
+                 ORDER BY COUNT(*) DESC, d.name
+                 LIMIT 1
+               ) AS top_winner,
+               (
+                 SELECT COUNT(*)
+                 FROM results r
+                 JOIN races ra3 ON ra3.id = r.race_id
+                 WHERE ra3.circuit_id = c.id AND r.position = 1
+                 GROUP BY r.driver_id
+                 ORDER BY COUNT(*) DESC
+                 LIMIT 1
+               ) AS top_winner_wins
+        FROM circuits c
+    """
     params: list = []
     if search:
-        sql += " WHERE name LIKE ? ESCAPE '\\' OR country LIKE ? ESCAPE '\\'"
+        sql += " WHERE c.name LIKE ? ESCAPE '\\' OR c.country LIKE ? ESCAPE '\\'"
         params += [analytics.like_pattern(search)] * 2
-    return [dict(row) for row in conn.execute(sql + " ORDER BY name", params)]
+    return [dict(row) for row in conn.execute(sql + " ORDER BY c.name", params)]
 
 
 @router.get("/circuits/{circuit_id}", tags=["circuits"])

@@ -59,6 +59,11 @@ class Circuit(BaseModel):
     name: str
     country: str
     has_map: bool = Field(description="False when no track-map SVG ships; the UI shows a map-unavailable state.")
+    races: int = Field(description="Races held here across the covered seasons.")
+    top_winner: str | None = Field(
+        default=None, description="Driver with most wins here. Null when no race here has a recorded winner."
+    )
+    top_winner_wins: int | None = Field(default=None, description="That driver's win count here.")
 
 
 class Race(BaseModel):
