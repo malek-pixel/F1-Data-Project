@@ -1,0 +1,7 @@
+# Normalise to LF in the repository. Developed on Windows; without this a
+# clone on Linux/macOS sees the whole tree as modified.
+* text=auto eol=lf
+
+# Binary -- never touch line endings.
+*.png binary
+*.db  binary

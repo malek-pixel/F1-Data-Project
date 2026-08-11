@@ -1,0 +1,246 @@
+"""API tests: valid requests, invalid input, empty results, missing entities."""
+from __future__ import annotations
+
+import pytest
+from fastapi.testclient import TestClient
+
+from backend.app.db import DB_PATH
+from backend.app.main import app
+
+pytestmark = pytest.mark.skipif(
+    not DB_PATH.exists(), reason="database not built -- run: python -m backend.etl.build"
+)
+
+
+@pytest.fixture(scope="module")
+def client():
+    with TestClient(app) as test_client:
+        yield test_client
+
+
+def test_health_states_data_is_not_live(client):
+    body = client.get("/api/health").json()
+    assert body["status"] == "ok"
+    assert body["live_data"] is False
+    assert body["season_to"] == 2025
+
+
+def test_driver_list_paginates(client):
+    body = client.get("/api/drivers?limit=5").json()
+    assert body["total"] == 129
+    assert len(body["items"]) == 5
+    assert body["items"][0]["wins"] >= body["items"][1]["wins"]
+
+
+def test_driver_search_filters_server_side(client):
+    body = client.get("/api/drivers?search=Hamilton").json()
+    assert body["total"] == 1
+    assert "Hamilton" in body["items"][0]["name"]
+
+
+def test_search_with_no_matches_returns_empty_not_error(client):
+    body = client.get("/api/drivers?search=zzzznotadriver").json()
+    assert body["total"] == 0
+    assert body["items"] == []
+
+
+def test_unknown_sort_key_is_rejected(client):
+    assert client.get("/api/drivers?sort=points").status_code == 422
+
+
+def test_out_of_range_limit_is_rejected(client):
+    assert client.get("/api/drivers?limit=0").status_code == 422
+    assert client.get("/api/drivers?limit=9999").status_code == 422
+
+
+def test_missing_driver_returns_404_with_structured_detail(client):
+    response = client.get("/api/drivers/999999")
+    assert response.status_code == 404
+    assert "detail" in response.json()
+
+
+def test_driver_detail_includes_constructor_history(client):
+    body = client.get("/api/drivers/1").json()
+    assert set(body) == {"id", "name", "stats", "constructors"}
+    assert body["stats"]["entries"] > 0
+
+
+def test_driver_seasons_are_ordered(client):
+    seasons = [s["season"] for s in client.get("/api/drivers/1/seasons").json()]
+    assert seasons == sorted(seasons)
+
+
+def test_constructor_driver_contribution_shares_sum_to_one(client):
+    rows = client.get("/api/constructors/1/drivers").json()
+    assert sum(r["entry_share"] for r in rows) == pytest.approx(1.0)
+
+
+def test_circuits_expose_map_availability(client):
+    circuits = client.get("/api/circuits").json()
+    assert len(circuits) == 39
+    assert any(c["has_map"] for c in circuits)
+    assert any(not c["has_map"] for c in circuits)
+
+
+def test_circuit_detail_lists_winners(client):
+    body = client.get("/api/circuits/1").json()
+    assert body["winners"]
+    assert body["top_drivers"]
+
+
+def test_season_detail_is_labelled_wins_based(client):
+    body = client.get("/api/seasons/2021").json()
+    assert body["ranking_basis"] == "wins"
+    assert body["races"] == 22
+    assert len(body["races_list"]) == 22
+
+
+def test_unknown_season_returns_404(client):
+    assert client.get("/api/seasons/1990").status_code == 404
+
+
+def test_race_detail_returns_full_classification(client):
+    body = client.get("/api/races/1").json()
+    positions = [r["position"] for r in body["results"]]
+    assert positions == sorted(positions)
+    assert positions[0] == 1
+
+
+def test_compare_rejects_identical_entities(client):
+    assert client.get("/api/compare/drivers?left=1&right=1").status_code == 400
+
+
+def test_compare_returns_both_sides_and_methodology(client):
+    body = client.get("/api/compare/drivers?left=1&right=2").json()
+    assert "left" in body and "right" in body
+    assert body["methodology"]
+
+
+def test_compare_unknown_entity_type_is_rejected(client):
+    assert client.get("/api/compare/cars?left=1&right=2").status_code == 422
+
+
+def test_records_carry_methodology(client):
+    records = client.get("/api/records").json()["records"]
+    assert records
+    assert all(r["methodology"] for r in records)
+
+
+def test_insights_are_traceable_to_a_query(client):
+    insights = client.get("/api/insights").json()["insights"]
+    assert insights
+    assert all(i["basis"] for i in insights)
+
+
+def test_dataset_summary_declares_unavailable_fields(client):
+    body = client.get("/api/dataset/summary").json()
+    assert "championship points" in body["unavailable_fields"]
+    assert body["known_issues"]
+    # No filesystem paths or connection details leak to the client.
+    assert "f1.db" not in str(body)
+
+
+def test_global_search_spans_entity_types(client):
+    results = client.get("/api/search?q=Ferrari").json()["results"]
+    assert any(r["kind"] == "constructor" for r in results)
+
+
+def test_search_requires_a_query(client):
+    assert client.get("/api/search?q=").status_code == 422
+
+
+# --------------------------------------------------------------------------
+# Advanced analytics
+# --------------------------------------------------------------------------
+
+def test_metric_registry_publishes_definitions_and_thresholds(client):
+    body = client.get("/api/analytics/metrics").json()
+    assert body["thresholds"]["min_shared_races"] > 0
+    keys = {m["key"] for m in body["metrics"]}
+    assert {"teammate_h2h", "position_stdev", "circuit_specialism"} <= keys
+    assert all(m["limitations"] for m in body["metrics"])
+
+
+def test_teammates_returns_spells_and_methodology(client):
+    body = client.get("/api/drivers/1/teammates").json()
+    assert set(body) == {"summary", "spells", "methodology"}
+    # The retirement caveat must travel with the numbers.
+    assert "retirement" in body["methodology"]["limitations"].lower()
+
+
+def test_teammate_spells_reconcile(client):
+    for spell in client.get("/api/drivers/1/teammates").json()["spells"]:
+        assert spell["ahead"] + spell["behind"] == spell["shared_races"]
+        assert 0 <= spell["h2h_rate"] <= 1
+
+
+def test_teammates_404_for_unknown_driver(client):
+    assert client.get("/api/drivers/999999/teammates").status_code == 404
+
+
+def test_distribution_histogram_partitions_entries(client):
+    body = client.get("/api/drivers/1/distribution").json()
+    assert sum(b["count"] for b in body["histogram"]) == body["entries"]
+
+
+def test_distribution_scoped_to_a_season_is_smaller(client):
+    career = client.get("/api/drivers/1/distribution").json()["entries"]
+    season = client.get("/api/drivers/1/distribution?season=2010").json()["entries"]
+    assert season <= career
+
+
+def test_driver_circuits_flag_the_threshold(client):
+    body = client.get("/api/drivers/1/circuits").json()
+    assert body["min_appearances"] >= 1
+    assert all("meets_threshold" in c for c in body["circuits"])
+
+
+def test_circuit_specialists_honour_min_appearances(client):
+    loose = client.get("/api/circuits/1/specialists?min_appearances=1").json()["specialists"]
+    strict = client.get("/api/circuits/1/specialists?min_appearances=10").json()["specialists"]
+    assert len(strict) <= len(loose)
+    assert all(s["appearances"] >= 10 for s in strict)
+
+
+def test_specialists_reject_out_of_range_threshold(client):
+    assert client.get("/api/circuits/1/specialists?min_appearances=0").status_code == 422
+
+
+def test_season_dominance_is_win_based(client):
+    body = client.get("/api/seasons/2023/dominance").json()
+    assert body["races"] == 22
+    assert 0 < body["top_driver_win_share"] <= 1
+    assert "points" in body["basis"].lower()
+
+
+def test_dominance_404_for_unknown_season(client):
+    assert client.get("/api/seasons/1990/dominance").status_code == 404
+
+
+def test_dominance_timeline_spans_the_dataset(client):
+    seasons = client.get("/api/analytics/dominance").json()["seasons"]
+    assert len(seasons) == 26
+    assert all(0 <= s["top_driver_win_share"] <= 1 for s in seasons)
+
+
+def test_eras_are_described_not_ranked(client):
+    body = client.get("/api/analytics/eras").json()
+    assert len(body["eras"]) == 3  # 2000s, 2010s, 2020s
+    assert "not as a ranking" in body["caveat"]
+
+
+def test_insights_span_multiple_categories(client):
+    insights = client.get("/api/insights?limit=12").json()["insights"]
+    kinds = {i["kind"] for i in insights}
+    assert len(kinds) >= 4, f"expected varied insight categories, got {kinds}"
+    assert all(i["basis"] for i in insights)
+
+
+def test_insights_avoid_causal_language(client):
+    """The dataset holds no explanatory variables, so no insight may assert a
+    cause. Guards against a future generator phrasing a result as an
+    explanation."""
+    banned = (" because ", " caused ", " proves ", " guaranteed ", " due to ")
+    for insight in client.get("/api/insights?limit=12").json()["insights"]:
+        text = f" {insight['headline']} {insight['detail']} ".lower()
+        assert not any(word in text for word in banned), insight["headline"]

@@ -1,3 +1,21 @@
+"""Acquire results.csv from the Ergast API (jolpi.ca mirror), 2000-2025.
+
+This is step 0 of the pipeline and the provenance of every number in the
+application: nothing downstream reaches the network.
+
+    f1_fetch.py  ->  results.csv  ->  backend/etl/build.py  ->  data/f1.db
+
+Resumable and season-idempotent: seasons already present in results.csv are
+skipped, so an interrupted run continues where it stopped rather than
+duplicating rows. It appends, so it cannot repair a partially-written season --
+delete that season's rows (or the file) and re-run if a season is incomplete.
+
+Extracts seven fields per classification; the API carries more (grid, status,
+points, fastest lap), and adding them here is the prerequisite for every metric
+listed as unavailable in METHODOLOGY.md.
+
+Run:  pip install requests && python f1_fetch.py
+"""
 import requests
 import csv
 import time

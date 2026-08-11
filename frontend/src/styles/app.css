@@ -1,0 +1,687 @@
+/* Component styles. Class-based so markup stays readable and every rule has
+   one home -- no stacked overrides. */
+
+/* ---------- Shell ---------- */
+
+.shell {
+  display: grid;
+  grid-template-columns: 232px 1fr;
+  min-height: 100vh;
+}
+
+.skip-link {
+  position: absolute;
+  top: -48px;
+  left: 12px;
+  z-index: 100;
+  padding: 8px 14px;
+  background: var(--accent);
+  color: #fff;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  border-radius: 0 0 6px 6px;
+  transition: top 0.15s;
+}
+.skip-link:focus {
+  top: 0;
+}
+
+.sidebar {
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  padding: var(--s5) 0;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
+}
+
+.sidebar__brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 var(--s5) var(--s5);
+}
+.sidebar__brand img {
+  width: 44px;
+  height: 22px;
+  object-fit: cover;
+  object-position: top;
+  border-radius: 4px;
+}
+
+.nav__group {
+  padding: var(--s4) var(--s5) var(--s2);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: var(--text-faint);
+}
+
+.nav__link {
+  display: block;
+  padding: 7px var(--s5);
+  font-size: var(--fs-sm);
+  color: var(--text-dim);
+  border-left: 2px solid transparent;
+}
+.nav__link:hover {
+  color: var(--text);
+  background: var(--elevated);
+}
+/* Active state uses a border AND a colour+weight change -- never colour alone. */
+.nav__link[aria-current="page"] {
+  color: var(--text);
+  font-weight: 600;
+  border-left-color: var(--accent);
+  background: var(--elevated);
+}
+
+.main {
+  padding: var(--s5) var(--s6) var(--s7);
+  max-width: 1600px;
+  min-width: 0;
+}
+
+/* ---------- Page header ---------- */
+
+.page-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--s4);
+  flex-wrap: wrap;
+  padding-bottom: var(--s4);
+  border-bottom: 1px solid var(--border);
+  margin-bottom: var(--s5);
+}
+.page-header h1 {
+  font-size: var(--fs-page);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+  margin: 0;
+}
+.page-header__eyebrow {
+  font-size: var(--fs-micro);
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+  margin-bottom: var(--s2);
+}
+.page-header__sub {
+  font-size: var(--fs-sm);
+  color: var(--text-dim);
+  margin-top: 6px;
+}
+
+/* ---------- Cards ---------- */
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--s5);
+}
+.card__title {
+  font-size: var(--fs-card);
+  font-weight: 600;
+  margin: 0 0 var(--s4);
+}
+.card__label {
+  font-size: var(--fs-micro);
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+  margin-bottom: var(--s3);
+}
+
+.grid {
+  display: grid;
+  gap: var(--s4);
+}
+/* Grid items default to min-width:auto, so a child with a wide intrinsic size
+   (an SVG viewBox, a long unbroken string) refuses to shrink and pushes the
+   page sideways. Every grid child may shrink; wide content scrolls inside its
+   own container instead. */
+.grid > * {
+  min-width: 0;
+}
+/* min(track, 100%) is load-bearing: a bare minmax(380px, 1fr) forces a 380px
+   column on a 375px viewport and pushes the whole page sideways. Capping the
+   minimum at the container width lets the track collapse instead. */
+.grid--kpi {
+  grid-template-columns: repeat(auto-fit, minmax(min(180px, 100%), 1fr));
+}
+.grid--2 {
+  grid-template-columns: repeat(auto-fit, minmax(min(380px, 100%), 1fr));
+}
+/* Aside + main content, e.g. a circuit's track map beside its stats. */
+.grid--split {
+  grid-template-columns: minmax(240px, 320px) 1fr;
+  align-items: start;
+}
+@media (max-width: 720px) {
+  .grid--split {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ---------- Stat card ---------- */
+
+.stat {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--s4) var(--s5);
+}
+.stat__label {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: var(--text-faint);
+  margin-bottom: 6px;
+}
+.stat__value {
+  font-size: var(--fs-kpi);
+  font-weight: 700;
+  line-height: 1;
+}
+.stat__value--unavailable {
+  font-size: var(--fs-sm);
+  font-weight: 400;
+  color: var(--text-faint);
+  line-height: 1.4;
+}
+.stat__note {
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+  margin-top: 6px;
+}
+
+/* ---------- Tables ---------- */
+
+.table-scroll {
+  overflow-x: auto;
+}
+
+table.data {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--fs-sm);
+}
+table.data th {
+  text-align: left;
+  font-family: var(--mono);
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  padding: var(--s2) var(--s3);
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+table.data td {
+  padding: 7px var(--s3);
+  border-bottom: 1px solid var(--border);
+}
+table.data tbody tr:hover {
+  background: var(--elevated);
+}
+table.data .num {
+  text-align: right;
+  font-family: var(--mono);
+}
+table.data th.num {
+  text-align: right;
+}
+
+.sort-btn {
+  background: none;
+  border: 0;
+  /* Negative margin cancels the padding visually, so the hit area grows to a
+     usable touch target without changing the table's density. */
+  padding: 13px 6px;
+  margin: -13px -6px;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  text-transform: inherit;
+  letter-spacing: inherit;
+}
+.sort-btn:hover {
+  color: var(--text);
+}
+/* Active sort is signalled by colour AND the caret glyph -- never colour alone. */
+.sort-btn[data-active="true"] {
+  color: var(--accent-text);
+}
+
+/* ---------- Controls ---------- */
+
+.controls {
+  display: flex;
+  gap: var(--s2);
+  flex-wrap: wrap;
+  align-items: center;
+  margin-bottom: var(--s4);
+}
+
+.input,
+.select {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-sm);
+  padding: 7px 10px;
+}
+.input::placeholder {
+  color: var(--text-faint);
+}
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.field > label {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: var(--text-faint);
+}
+
+.btn {
+  background: var(--elevated);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  padding: 7px 13px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  min-height: 34px;
+}
+.btn:hover:not(:disabled) {
+  border-color: var(--text-faint);
+}
+.btn:disabled {
+  color: var(--text-faint);
+  cursor: not-allowed;
+}
+.btn--primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
+
+.badge {
+  display: inline-block;
+  padding: 3px 8px;
+  border-radius: var(--radius-sm);
+  font-size: var(--fs-xs);
+  border: 1px solid var(--border);
+  background: var(--elevated);
+  color: var(--text-dim);
+}
+.badge--warning {
+  background: rgba(245, 158, 11, 0.1);
+  border-color: rgba(245, 158, 11, 0.3);
+  color: var(--warning);
+}
+.badge--info {
+  background: rgba(0, 144, 255, 0.1);
+  border-color: rgba(0, 144, 255, 0.3);
+  color: var(--info);
+}
+.badge--accent {
+  background: rgba(225, 6, 0, 0.1);
+  border-color: rgba(225, 6, 0, 0.3);
+  color: var(--accent-text);
+}
+
+/* ---------- States ---------- */
+
+.state {
+  padding: var(--s6) var(--s5);
+  text-align: center;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.state__title {
+  font-size: var(--fs-card);
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+.state__body {
+  font-size: var(--fs-sm);
+  color: var(--text-dim);
+  max-width: 52ch;
+  margin: 0 auto var(--s4);
+}
+
+.skeleton {
+  background: linear-gradient(90deg, var(--elevated) 25%, #1c232c 50%, var(--elevated) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s infinite;
+  border-radius: 4px;
+}
+@keyframes shimmer {
+  to {
+    background-position: -200% 0;
+  }
+}
+
+/* Unavailable metric: an explicit, styled state -- not a blank or a zero. */
+.unavailable {
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  padding: var(--s4);
+  background: var(--surface);
+}
+.unavailable__label {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: var(--text-faint);
+  margin-bottom: 6px;
+}
+.unavailable__value {
+  font-size: var(--fs-sm);
+  color: var(--text-faint);
+}
+.unavailable__why {
+  font-size: var(--fs-xs);
+  color: var(--text-faint);
+  margin-top: 6px;
+}
+
+/* ---------- Charts ---------- */
+
+.chart {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--s5);
+}
+.chart__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s3);
+  margin-bottom: var(--s4);
+  flex-wrap: wrap;
+}
+.chart__title {
+  font-size: var(--fs-card);
+  font-weight: 600;
+  margin: 0;
+}
+.chart__unit {
+  font-size: var(--fs-micro);
+  color: var(--text-dim);
+  letter-spacing: 0.06em;
+}
+.chart svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.chart__legend {
+  display: flex;
+  gap: var(--s4);
+  flex-wrap: wrap;
+  margin-top: var(--s3);
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+}
+.chart__legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.chart__swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+/* Data table behind every chart -- the screen-reader and exact-value path. */
+.chart__table {
+  margin-top: var(--s3);
+}
+.chart__table summary {
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+/* ---------- Command palette ---------- */
+
+.palette__scrim {
+  position: fixed;
+  inset: 0;
+  background: rgba(4, 6, 9, 0.72);
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding-top: 12vh;
+  z-index: 50;
+}
+.palette {
+  width: min(560px, 92vw);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.palette input {
+  width: 100%;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  padding: var(--s4);
+}
+.palette__results {
+  max-height: 340px;
+  overflow-y: auto;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.palette__item {
+  display: flex;
+  gap: var(--s3);
+  align-items: center;
+  width: 100%;
+  padding: 10px var(--s4);
+  background: none;
+  border: 0;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-sm);
+  text-align: left;
+  cursor: pointer;
+}
+.palette__item[data-active="true"] {
+  background: var(--elevated);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.palette__kind {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: var(--text-faint);
+  width: 84px;
+  flex-shrink: 0;
+}
+.palette__sub {
+  margin-left: auto;
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+}
+
+/* ---------- Misc ---------- */
+
+.circuit-map {
+  background: var(--elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--s4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 200px;
+}
+.circuit-map img {
+  max-width: 100%;
+  max-height: 240px;
+  /* Assets are dark-on-transparent; invert to read on the dark surface. */
+  filter: invert(1) brightness(0.92);
+}
+
+
+.pagination {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  margin-top: var(--s4);
+  font-size: var(--fs-sm);
+  color: var(--text-dim);
+}
+
+.prose {
+  max-width: 76ch;
+}
+.prose h2 {
+  font-size: var(--fs-section);
+  font-weight: 600;
+  margin: var(--s6) 0 var(--s3);
+}
+.prose h3 {
+  font-size: var(--fs-card);
+  font-weight: 600;
+  margin: var(--s5) 0 var(--s2);
+}
+.prose p,
+.prose li {
+  font-size: var(--fs-body);
+  color: var(--text-dim);
+}
+.prose code {
+  font-family: var(--mono);
+  font-size: var(--fs-sm);
+  background: var(--elevated);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 5px;
+  color: var(--text);
+}
+
+.section-title {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s3);
+  margin: var(--s6) 0 var(--s4);
+}
+.section-title h2 {
+  font-size: var(--fs-section);
+  font-weight: 600;
+  margin: 0;
+  letter-spacing: -0.01em;
+}
+.section-title__rule {
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+.tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: var(--s4);
+  overflow-x: auto;
+}
+.tab {
+  background: none;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: var(--fs-sm);
+  padding: var(--s2) var(--s4);
+  cursor: pointer;
+  white-space: nowrap;
+  min-height: 40px;
+}
+.tab[aria-selected="true"] {
+  color: var(--text);
+  font-weight: 600;
+  border-bottom-color: var(--accent);
+}
+
+/* ---------- Responsive ----------
+   Desktop-first, as designed. Below 1080px the sidebar becomes a horizontal
+   bar rather than a shrunken column, and dense grids collapse to one column.
+   Tables scroll inside .table-scroll; the page body never scrolls sideways. */
+
+@media (max-width: 1080px) {
+  .shell {
+    grid-template-columns: 1fr;
+  }
+  .sidebar {
+    position: static;
+    height: auto;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+    padding: var(--s3) 0;
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
+    overflow-x: auto;
+  }
+  .sidebar__brand {
+    padding: 0 var(--s4);
+    flex-shrink: 0;
+  }
+  .sidebar nav {
+    display: flex;
+    align-items: center;
+  }
+  .nav__group {
+    padding: 0 var(--s2);
+    white-space: nowrap;
+  }
+  .nav__link {
+    border-left: 0;
+    border-bottom: 2px solid transparent;
+    padding: var(--s2) var(--s3);
+    white-space: nowrap;
+  }
+  .nav__link[aria-current="page"] {
+    border-left: 0;
+    border-bottom-color: var(--accent);
+  }
+  .main {
+    padding: var(--s4);
+  }
+}
+
+@media (max-width: 720px) {
+  :root {
+    --fs-page: 24px;
+    --fs-kpi: 28px;
+  }
+  .grid--2,
+  .grid--kpi {
+    grid-template-columns: 1fr;
+  }
+  .page-header {
+    align-items: flex-start;
+  }
+}
