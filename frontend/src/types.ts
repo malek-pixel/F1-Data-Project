@@ -16,6 +16,23 @@ export interface Stats {
   best_classified_position: number | null;
   /** false below the backend's minimum entry count; show the value, flag it. */
   rates_reliable: boolean;
+
+  /*
+   * Enrichment-derived (finishing status, points, grid). All nullable: a build
+   * without data/jolpica_results.csv has none of them, and null must read as
+   * "not known", never as zero.
+   */
+  /** Classified finishes. NOT the same as "saw the flag" -- a lapped car is classified. */
+  finishes: number | null;
+  dnfs: number | null;
+  /** Over rows that HAVE a finishing status, not over all entries. */
+  dnf_rate: number | null;
+  /** Championship points as awarded, halves included. */
+  points: number | null;
+  /** Excludes pit-lane starts (grid 0), which are real but not a grid slot. */
+  avg_grid: number | null;
+  /** Grid minus finish, classified finishes only. Positive = places gained. */
+  avg_positions_gained: number | null;
 }
 
 export interface NamedStats extends Stats {
@@ -119,8 +136,60 @@ export interface SeasonRounds {
   rounds: SeasonRound[];
 }
 
+/** Qualifying classification for one race. */
+export interface QualifyingResult {
+  position: number;
+  q1: string | null;
+  q2: string | null;
+  q3: string | null;
+  driver_id: number;
+  driver_name: string;
+  constructor_id: number;
+  constructor_name: string;
+  /** The grid actually started from -- differs after penalties. */
+  race_grid: number | null;
+}
+
+export interface SprintResult {
+  position: number;
+  classification: string | null;
+  status: string | null;
+  points: number | null;
+  grid: number | null;
+  laps: number | null;
+  driver_id: number;
+  driver_name: string;
+  constructor_id: number;
+  constructor_name: string;
+}
+
+export interface PitStop {
+  lap: number;
+  stop: number;
+  /** Raw source string, e.g. "22.213". Null where unrecorded -- never 0. */
+  duration: string | null;
+  time_of_day: string | null;
+  driver_id: number;
+  driver_name: string;
+}
+
+/**
+ * A session block that knows WHY it is empty.
+ *
+ * An empty array alone cannot distinguish "no qualifying was recorded for this
+ * race" from "nobody qualified", and only one of those is ever true.
+ */
+export interface SessionBlock<T> {
+  available: boolean;
+  unavailable_reason: string | null;
+  items: T[];
+}
+
 export interface RaceDetail extends Race {
   results: RaceResult[];
+  qualifying: SessionBlock<QualifyingResult>;
+  sprint: SessionBlock<SprintResult>;
+  pit_stops: SessionBlock<PitStop>;
 }
 
 export interface DriverDetail {
@@ -137,15 +206,44 @@ export interface ConstructorDetail {
   seasons: SeasonStats[];
 }
 
+/** One row of a championship table: points, from race + sprint results. */
+export interface StandingsRow {
+  position: number;
+  id: number;
+  name: string;
+  points: number | null;
+  wins: number;
+  podiums: number;
+  entries: number;
+}
+
+export interface Standings {
+  drivers: StandingsRow[];
+  constructors: StandingsRow[];
+  /** "points". */
+  basis: string;
+  includes_sprint_points: boolean;
+  /** Tie-break caveat -- the official countback rule is not implemented. */
+  caveat: string;
+}
+
 export interface SeasonSummary {
   season: number;
   races: number;
   entries: number;
-  /** Always "wins". These are NOT championship standings -- no points column exists. */
+  /**
+   * Describes `drivers`/`constructors` below -- always "wins".
+   *
+   * It does NOT describe `standings`, which is the real championship. This
+   * field previously said no points column existed; that stopped being true
+   * when points were ingested.
+   */
   ranking_basis: string;
   drivers: NamedStats[];
   constructors: NamedStats[];
   races_list: Race[];
+  /** The actual championship: race + sprint points. */
+  standings: Standings;
 }
 
 export interface SeasonIndexRow {

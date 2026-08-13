@@ -97,7 +97,66 @@ def list_races(
 
 @router.get("/races/{race_id}", tags=["races"])
 def get_race(race_id: int, conn: sqlite3.Connection = Depends(get_db)):
+    """Full race weekend: classification, qualifying, sprint and pit stops.
+
+    Each session reports its own availability rather than returning a bare
+    empty list. "No qualifying recorded for this race" and "nobody qualified"
+    look identical in JSON otherwise, and only one of them is true.
+    """
     row = conn.execute(f"{RACE_SELECT} WHERE ra.id = ?", [race_id]).fetchone()
     if row is None:
         raise HTTPException(status_code=404, detail=f"No race with id {race_id}")
-    return {**dict(row), "results": analytics.race_results(conn, race_id)}
+
+    qualifying = analytics.qualifying_results(conn, race_id)
+    sprint = analytics.sprint_results(conn, race_id)
+    stops = analytics.pit_stops(conn, race_id)
+
+    return {
+        **dict(row),
+        "results": analytics.race_results(conn, race_id),
+        "qualifying": {
+            "available": bool(qualifying),
+            # Why it is missing matters: pre-2003 is a known source gap, not a
+            # weekend without a qualifying session.
+            "unavailable_reason": None if qualifying else
+                "The source carries no qualifying for this race.",
+            "items": qualifying,
+        },
+        "sprint": {
+            "available": bool(sprint),
+            "unavailable_reason": None if sprint else
+                "No sprint was held at this event.",
+            "items": sprint,
+        },
+        "pit_stops": {
+            "available": bool(stops),
+            "unavailable_reason": None if stops else
+                "Pit stop data begins in 2011; none is recorded for this race.",
+            "items": stops,
+        },
+    }
+
+
+@router.get("/seasons/{season}/standings", tags=["seasons"])
+def get_standings(season: int, conn: sqlite3.Connection = Depends(get_db)):
+    """Championship standings: race points plus sprint points.
+
+    These ARE the championship, unlike the wins-ordered tables on
+    `/seasons/{season}`. Verified to reproduce the official champion and exact
+    points total for every season in the dataset.
+    """
+    drivers = analytics.standings(conn, season, "driver")
+    if not drivers:
+        raise HTTPException(status_code=404, detail=f"No races recorded for season {season}")
+    return {
+        "season": season,
+        "basis": "points",
+        "includes_sprint_points": True,
+        "caveat": (
+            "Ties are broken by wins, then podiums. The official countback "
+            "rule is not implemented, so an exact points tie may order "
+            "differently from the official classification."
+        ),
+        "drivers": drivers,
+        "constructors": analytics.standings(conn, season, "constructor"),
+    }

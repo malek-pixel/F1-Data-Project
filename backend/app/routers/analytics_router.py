@@ -14,7 +14,7 @@ import sqlite3
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from .. import advanced
+from .. import advanced, analytics
 from ..db import fetch_one_or_404, get_db
 
 router = APIRouter()
@@ -56,6 +56,33 @@ def driver_distribution(
     """
     fetch_one_or_404(conn, "drivers", driver_id)
     return advanced.distribution(conn, driver_id=driver_id, season=season)
+
+
+@router.get("/drivers/{driver_id}/qualifying", tags=["drivers"])
+def driver_qualifying(driver_id: int, conn: sqlite3.Connection = Depends(get_db)):
+    """Career qualifying record.
+
+    `qualifying_p1` counts fastest-qualifier classifications. It is NOT a pole
+    count and must not be presented as one: the two diverge in the sprint era
+    (2021 awarded pole to the sprint winner) and one case remains unexplained.
+    The field name says exactly what was counted.
+    """
+    fetch_one_or_404(conn, "drivers", driver_id)
+    stats = analytics.driver_qualifying_stats(conn, driver_id)
+    since = stats.get("coverage_from")
+    return {
+        **stats,
+        # Built from the measured coverage boundary, never a literal year.
+        "coverage_note": (
+            f"Qualifying is essentially complete from {since}. The source "
+            f"carries little before that, so early-career totals may "
+            f"understate."
+            if since else "Qualifying coverage could not be determined."
+        ),
+        "qualifying_p1_note": (
+            "Fastest-qualifier classifications, not official pole positions."
+        ),
+    }
 
 
 @router.get("/drivers/{driver_id}/teammates", tags=["drivers"])

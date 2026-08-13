@@ -417,13 +417,199 @@ def leaderboard(
 # Season / race views
 # --------------------------------------------------------------------------
 
-def season_summary(conn: sqlite3.Connection, season: int) -> dict | None:
-    """Season-level totals plus the wins-based driver and constructor tables.
+def standings(conn: sqlite3.Connection, season: int, entity: str = "driver") -> list[dict]:
+    """Championship standings for a season. Calculated, never stored.
 
-    IMPORTANT: these are *not* championship standings. The source has no
-    points column, so drivers and constructors are ranked by wins, then
-    podiums, then average classified position. A season's actual champion may
-    differ. Every consumer must label this as a wins-based ranking.
+    Race points plus sprint points. Sprints have counted toward the
+    championship since 2021, and omitting them made 2021-2025 totals short by
+    exactly 7/21/45/38/29 -- which is how the missing sprint dataset was found.
+
+    Verified against the official standings for all 26 seasons: champion and
+    exact points total both match.
+
+    CAVEAT, and the reason `position` is not called `championship_position`:
+    ties are broken here by wins, then podiums. The official rule is a
+    countback (most wins, then most seconds, then most thirds, ...), which is
+    not implemented. Ranking is therefore correct wherever points differ, and
+    an approximation on an exact tie.
+    """
+    column = "driver_id" if entity == "driver" else "constructor_id"
+    table = "drivers" if entity == "driver" else "constructors"
+
+    rows = conn.execute(
+        f"""
+        WITH scored AS (
+            SELECT r.{column} AS entity_id, r.points, r.position
+              FROM results r JOIN races ra ON ra.id = r.race_id
+             WHERE ra.season = ?
+            UNION ALL
+            SELECT s.{column}, s.points, NULL
+              FROM sprint_results s JOIN races ra ON ra.id = s.race_id
+             WHERE ra.season = ?
+        )
+        SELECT e.id, e.name,
+               SUM(scored.points)                                   AS points,
+               SUM(CASE WHEN scored.position = 1 THEN 1 ELSE 0 END) AS wins,
+               SUM(CASE WHEN scored.position <= 3 THEN 1 ELSE 0 END) AS podiums,
+               COUNT(scored.position)                               AS entries
+        FROM scored JOIN {table} e ON e.id = scored.entity_id
+        GROUP BY e.id
+        ORDER BY points DESC, wins DESC, podiums DESC, e.name
+        """,
+        [season, season],
+    ).fetchall()
+
+    return [
+        {
+            "position": index,
+            "id": row["id"],
+            "name": row["name"],
+            # Points are stored as awarded, so halves survive; trim the float
+            # noise without pretending to more precision than exists.
+            "points": round(row["points"], 2) if row["points"] is not None else None,
+            "wins": row["wins"],
+            "podiums": row["podiums"],
+            "entries": row["entries"],
+        }
+        for index, row in enumerate(rows, start=1)
+    ]
+
+
+def qualifying_coverage_from(conn: sqlite3.Connection) -> int | None:
+    """First season where qualifying is essentially complete.
+
+    Measured, not asserted. The source's early coverage is thin and a literal
+    year here would be a claim nothing re-checks -- the same reason
+    `coverage_span` exists. "Essentially complete" is >=95% of that season's
+    result rows having a qualifying row.
+    """
+    row = conn.execute(
+        """
+        SELECT MIN(ra.season) AS season FROM (
+            SELECT ra.season,
+                   CAST(COUNT(DISTINCT q.id) AS REAL)
+                     / NULLIF(COUNT(DISTINCT r.id), 0) AS ratio
+            FROM races ra
+            LEFT JOIN results r ON r.race_id = ra.id
+            LEFT JOIN qualifying_results q ON q.race_id = ra.id
+            GROUP BY ra.season
+        ) ra WHERE ra.ratio >= 0.95
+        """
+    ).fetchone()
+    return row["season"] if row else None
+
+
+def qualifying_results(conn: sqlite3.Connection, race_id: int) -> list[dict]:
+    """Qualifying classification for one race, fastest first.
+
+    Returns [] when the source has no qualifying for that race -- true for most
+    of 2000-2002. An empty list means "not recorded", and the caller must say
+    so rather than rendering it as "nobody qualified".
+    """
+    rows = conn.execute(
+        """
+        SELECT q.position, q.q1, q.q2, q.q3,
+               d.id AS driver_id, d.name AS driver_name,
+               c.id AS constructor_id, c.name AS constructor_name,
+               r.grid AS race_grid
+        FROM qualifying_results q
+        JOIN drivers d      ON d.id = q.driver_id
+        JOIN constructors c ON c.id = q.constructor_id
+        LEFT JOIN results r ON r.race_id = q.race_id AND r.driver_id = q.driver_id
+        WHERE q.race_id = ?
+        ORDER BY q.position
+        """,
+        [race_id],
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def sprint_results(conn: sqlite3.Connection, race_id: int) -> list[dict]:
+    """Sprint classification for one race weekend, or [] if there was none."""
+    rows = conn.execute(
+        """
+        SELECT s.position, s.classification, s.status, s.points, s.grid, s.laps,
+               d.id AS driver_id, d.name AS driver_name,
+               c.id AS constructor_id, c.name AS constructor_name
+        FROM sprint_results s
+        JOIN drivers d      ON d.id = s.driver_id
+        JOIN constructors c ON c.id = s.constructor_id
+        WHERE s.race_id = ?
+        ORDER BY s.position
+        """,
+        [race_id],
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def pit_stops(conn: sqlite3.Connection, race_id: int) -> list[dict]:
+    """Pit stops for one race, in lap order.
+
+    Empty for every race before 2011: the source has no pit stop data at all
+    for those seasons. Absent means unrecorded, never "no stops were made".
+    """
+    rows = conn.execute(
+        """
+        SELECT p.lap, p.stop, p.duration, p.time_of_day,
+               d.id AS driver_id, d.name AS driver_name
+        FROM pit_stops p
+        JOIN drivers d ON d.id = p.driver_id
+        WHERE p.race_id = ?
+        ORDER BY p.lap, p.stop
+        """,
+        [race_id],
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def driver_qualifying_stats(conn: sqlite3.Connection, driver_id: int) -> dict:
+    """Career qualifying record for one driver.
+
+    `qualifying_p1` is deliberately NOT called "poles". Counting fastest-
+    qualifier classifications gives Hamilton 107 against an official 104: two
+    are sprint weekends where 2021 awarded pole to the sprint winner, and one
+    is unexplained. Until that is resolved the honest label is the one that
+    describes exactly what was counted.
+    """
+    row = conn.execute(
+        """
+        SELECT COUNT(*) AS entries,
+               SUM(CASE WHEN position = 1 THEN 1 ELSE 0 END) AS qualifying_p1,
+               AVG(CAST(position AS REAL)) AS avg_position,
+               MIN(position) AS best_position
+        FROM qualifying_results WHERE driver_id = ?
+        """,
+        [driver_id],
+    ).fetchone()
+
+    entries = row["entries"] or 0
+    if not entries:
+        # No qualifying recorded. None, not 0 -- the driver may well have
+        # qualified; the source simply does not say.
+        return {
+            "entries": 0, "qualifying_p1": None,
+            "avg_qualifying_position": None, "best_qualifying_position": None,
+            "coverage_from": qualifying_coverage_from(conn),
+        }
+    return {
+        "entries": entries,
+        "qualifying_p1": row["qualifying_p1"],
+        "avg_qualifying_position": round(row["avg_position"], 3),
+        "best_qualifying_position": row["best_position"],
+        "coverage_from": qualifying_coverage_from(conn),
+    }
+
+
+def season_summary(conn: sqlite3.Connection, season: int) -> dict | None:
+    """Season-level totals, championship standings, and per-entity tables.
+
+    `standings` is the real championship: race + sprint points, verified to
+    reproduce the official champion and points for all 26 seasons.
+
+    `drivers` / `constructors` remain the wins-ordered tables they always were,
+    kept because they answer a different question ("who won most races") and
+    because removing them would break existing consumers. `ranking_basis`
+    describes those tables, NOT `standings`.
     """
     race_count = conn.execute("SELECT COUNT(*) FROM races WHERE season = ?", [season]).fetchone()[0]
     if not race_count:
@@ -438,9 +624,23 @@ def season_summary(conn: sqlite3.Connection, season: int) -> dict | None:
         "entries": conn.execute(
             "SELECT COUNT(*) FROM results r JOIN races ra ON ra.id = r.race_id WHERE ra.season = ?", [season]
         ).fetchone()[0],
+        # Describes `drivers`/`constructors` below, not `standings`.
         "ranking_basis": "wins",
         "drivers": table("driver"),
         "constructors": table("constructor"),
+        # The actual championship. Present since points were ingested; before
+        # that this key did not exist and consumers correctly said so.
+        "standings": {
+            "drivers": standings(conn, season, "driver"),
+            "constructors": standings(conn, season, "constructor"),
+            "basis": "points",
+            "includes_sprint_points": True,
+            "caveat": (
+                "Ties are broken by wins, then podiums. The official rule is a "
+                "countback and is not implemented, so an exact points tie may "
+                "order differently from the official classification."
+            ),
+        },
     }
 
 
@@ -939,28 +1139,73 @@ def dataset_summary(conn: sqlite3.Connection) -> dict:
         )
 
     coverage = conn.execute("SELECT MIN(season) AS lo, MAX(season) AS hi FROM races").fetchone()
+
+    # MEASURED, never asserted.
+    #
+    # This list used to be a hardcoded literal, and after the enrichment landed
+    # it was actively lying to users -- the UI renders it under "What this
+    # dataset cannot tell you", and it still named points, grid, finishing
+    # status, qualifying and pit stops long after all five existed. A claim
+    # about what the data lacks has to be checked against the data.
+    #
+    # Each probe returns how many rows actually carry the field. A field with
+    # partial coverage is reported as available WITH its window, because
+    # "we have this for 2011 onward" is neither "we have it" nor "we don't".
+    def count(sql: str) -> int:
+        try:
+            return conn.execute(sql).fetchone()[0] or 0
+        except sqlite3.Error:
+            # Table absent in this build -- the field is genuinely unavailable.
+            return 0
+
+    probes = [
+        ("finishing status (DNF / DNS / DSQ)",
+         "SELECT COUNT(classification) FROM results", None),
+        ("championship points", "SELECT COUNT(points) FROM results", None),
+        ("grid position", "SELECT COUNT(grid) FROM results", None),
+        ("laps completed", "SELECT COUNT(laps) FROM results", None),
+        ("qualifying", "SELECT COUNT(*) FROM qualifying_results",
+         "complete from {q}; sparse before"),
+        ("sprint results", "SELECT COUNT(*) FROM sprint_results", "2021 onward"),
+        ("pit stops", "SELECT COUNT(*) FROM pit_stops", "2011 onward"),
+    ]
+
+    available_fields = ["season", "round", "race_name", "date", "position",
+                        "driver", "constructor"]
+    unavailable_fields = []
+    for label, sql, window in probes:
+        if count(sql):
+            note = window
+            if note and "{q}" in note:
+                since = qualifying_coverage_from(conn)
+                note = note.format(q=since) if since else "partial early coverage"
+            available_fields.append(f"{label} ({note})" if note else label)
+        else:
+            unavailable_fields.append(label)
+
+    # No source supplies these at all, in any build.
+    unavailable_fields += [
+        "fastest lap",
+        "lap times / sector times",
+        "tyre compounds",
+        "telemetry",
+        "car specifications",
+    ]
+
     return {
-        "source": "results.csv (Ergast-derived race classifications)",
+        "source": "results.csv, enriched from Jolpica-F1",
         "season_from": coverage["lo"],
         "season_to": coverage["hi"],
         "tables": tables,
-        "available_fields": ["season", "round", "race_name", "date", "position", "driver", "constructor"],
-        "unavailable_fields": [
-            "grid position / qualifying",
-            "fastest lap",
-            "finishing status (DNF / DNS / DSQ)",
-            "championship points",
-            "lap times / sector times",
-            "pit stops",
-            "tyre compounds",
-            "telemetry",
-            "car specifications",
-        ],
+        "available_fields": available_fields,
+        "unavailable_fields": unavailable_fields,
         # Rendered verbatim as text in the UI, so no markdown: backticks and
         # "--" would reach the reader as literal characters.
         "known_issues": [
             "2002 French Grand Prix carries 20 classification rows but runs to P22 — two rows absent upstream.",
-            "The position column is classification order, not finishing status: retirements are ranked, not flagged.",
+            "The position column is classification order, not finishing position: retirements are ranked within it. Use the classification column, which flags them.",
+            "Qualifying is sparse before 2003 and pit stops begin in 2011. Absent rows mean the source has no record, not that nothing happened.",
+            "Counting qualifying P1 does not reproduce official pole tallies in the sprint era, so it is labelled qualifying P1 and never poles.",
             "Circuit identity is derived from race_name via a curated season-aware map (backend/etl/circuit_map.csv).",
             "15 of 39 circuits ship no track-map SVG and render a map-unavailable state.",
         ],

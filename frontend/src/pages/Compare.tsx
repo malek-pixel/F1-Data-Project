@@ -148,9 +148,64 @@ function StatsColumns({ left, right, title }: { left: Stats; right: Stats; title
         lowerIsBetter
       />
 
-      {/* The mockup compares poles, points, points-per-start, DNFs and titles
-          as well. None has a source column, so each keeps its row and says so
-          rather than vanishing from the comparison. */}
+      {/* Points, DNFs and finish rate were in the unavailable list until the
+          enrichment landed. They are real columns now, so they are compared
+          like everything else -- leaving them in "not comparable" would be
+          telling the user a limitation this dataset no longer has. */}
+      <ComparisonBar
+        label="POINTS"
+        leftLabel="left"
+        rightLabel="right"
+        left={left.points}
+        right={right.points}
+        format={(v) => num(v)}
+      />
+      <ComparisonBar
+        label="POINTS / START"
+        leftLabel="left"
+        rightLabel="right"
+        left={left.entries ? (left.points ?? 0) / left.entries : null}
+        right={right.entries ? (right.points ?? 0) / right.entries : null}
+        format={(v) => dec(v)}
+      />
+      <ComparisonBar
+        label="DNFs"
+        leftLabel="left"
+        rightLabel="right"
+        left={left.dnfs}
+        right={right.dnfs}
+        format={(v) => num(v)}
+        lowerIsBetter
+      />
+      <ComparisonBar
+        label="DNF RATE"
+        leftLabel="left"
+        rightLabel="right"
+        left={left.dnf_rate}
+        right={right.dnf_rate}
+        format={(v) => pct(v)}
+        lowerIsBetter
+      />
+      <ComparisonBar
+        label="AVG GRID"
+        leftLabel="left"
+        rightLabel="right"
+        left={left.avg_grid}
+        right={right.avg_grid}
+        format={(v) => dec(v)}
+        lowerIsBetter
+      />
+      <ComparisonBar
+        label="AVG PLACES GAINED"
+        leftLabel="left"
+        rightLabel="right"
+        left={left.avg_positions_gained}
+        right={right.avg_positions_gained}
+        format={(v) => dec(v)}
+      />
+
+      {/* What genuinely still has no source column. Each keeps its row and
+          says why, rather than vanishing from the comparison. */}
       <div
         className="mono"
         style={{
@@ -166,12 +221,12 @@ function StatsColumns({ left, right, title }: { left: Stats; right: Stats; title
       </div>
       <ul className="pending-rows mono">
         {[
-          ["POLES", "no qualifying data"],
-          ["POINTS", "no points column"],
-          ["POINTS / START", "no points column"],
-          ["FINISH RATE", "no finishing-status column"],
-          ["DNFs", "no finishing-status column"],
-          ["TITLES", "titles require points"],
+          // Qualifying IS ingested, but this endpoint compares race results
+          // only, and P1-in-qualifying is not the same as an official pole --
+          // see the driver qualifying endpoint for the honest figure.
+          ["POLES", "official pole counts are not reproducible from this source"],
+          ["FASTEST LAPS", "no fastest-lap column"],
+          ["TITLES", "championship titles are not stored; only per-season points"],
         ].map(([label, why]) => (
           <li key={label}>
             <PendingValue title={why} />

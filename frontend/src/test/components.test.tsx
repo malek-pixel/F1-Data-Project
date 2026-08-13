@@ -18,6 +18,15 @@ const stats = (overrides: Partial<Stats> = {}): Stats => ({
   top10_rate: 0.8,
   avg_classified_position: 6.5,
   best_classified_position: 1,
+  // Enrichment fields. Present so the fixture matches the real payload shape;
+  // a partial fixture would let a component read undefined and render it as
+  // blank rather than as the explicit "unavailable" state.
+  finishes: 85,
+  dnfs: 15,
+  dnf_rate: 0.15,
+  points: 1200,
+  avg_grid: 4.2,
+  avg_positions_gained: 0.8,
   rates_reliable: true,
   ...overrides,
 });

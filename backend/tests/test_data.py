@@ -127,15 +127,21 @@ def test_database_is_read_only(conn):
         conn.execute("DELETE FROM results")
 
 
-def test_no_hardcoded_season_span_in_application_code():
-    """No module may state the coverage window as a literal.
+def test_no_hardcoded_season_span_in_user_facing_strings():
+    """No string the API can emit may state the coverage window as a literal.
 
-    A span written into a methodology string is correct only until the next
-    ingestion, after which it silently describes the wrong window -- which is
-    worse than stating no window. `analytics.coverage_span()` reads it from the
-    data instead. The one permitted occurrence is that helper's own docstring,
-    which uses the current span as an illustrative example.
+    A span baked into a methodology string is correct only until the next
+    ingestion, after which it silently describes the wrong window -- worse than
+    stating no window at all. `analytics.coverage_span()` and
+    `analytics.qualifying_coverage_from()` read it from the data instead.
+
+    Scoped to strings that can REACH A USER, via the AST rather than a line
+    scan. Comments and docstrings are excluded deliberately: they document
+    findings, and a finding like "totals were short from 2021" is evidence
+    whose whole value is the specific year. Only runtime string values are
+    capable of shipping a stale claim to a client.
     """
+    import ast
     import re
 
     app_dir = Path(__file__).resolve().parents[1] / "app"
@@ -143,15 +149,31 @@ def test_no_hardcoded_season_span_in_application_code():
 
     offenders = []
     for path in sorted(app_dir.rglob("*.py")):
-        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-            if not span.search(line):
-                continue
-            # The helper documents the format it returns.
-            if path.name == "analytics.py" and "The dataset's season range" in line:
-                continue
-            offenders.append(f"{path.relative_to(app_dir)}:{lineno}: {line.strip()}")
+        tree = ast.parse(path.read_text(encoding="utf-8"))
 
-    assert not offenders, "hardcoded season span; use analytics.coverage_span():\n" + "\n".join(offenders)
+        # Collect docstring nodes so they can be skipped by identity.
+        docstrings = set()
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                body = getattr(node, "body", None)
+                if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant):
+                    if isinstance(body[0].value.value, str):
+                        docstrings.add(id(body[0].value))
+
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Constant) or not isinstance(node.value, str):
+                continue
+            if id(node) in docstrings:
+                continue
+            if span.search(node.value):
+                offenders.append(
+                    f"{path.relative_to(app_dir)}:{node.lineno}: {node.value.strip()[:80]}"
+                )
+
+    assert not offenders, (
+        "hardcoded season span in a user-facing string; derive it instead:\n"
+        + "\n".join(offenders)
+    )
 
 
 def test_coverage_span_matches_the_data(conn):

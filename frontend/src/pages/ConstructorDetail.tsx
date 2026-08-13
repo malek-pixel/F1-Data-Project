@@ -123,8 +123,9 @@ export function ConstructorDetail() {
           </div>
 
           <p style={{ fontSize: 13, color: "var(--text-dim)", marginTop: 0 }}>
-            <Badge tone="info">Methodology</Badge> Share of this constructor&rsquo;s own results, not share of
-            championship points — the source data has no points column.
+            <Badge tone="info">Methodology</Badge> Share of this constructor&rsquo;s own results (entries,
+            wins, podiums), not share of championship points. Points exist in the dataset; a points
+            share is simply a different question from the results share shown here.
           </p>
 
           <Async state={contribution} loadingRows={3}>

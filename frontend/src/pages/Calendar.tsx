@@ -37,12 +37,19 @@ interface Dominance {
   basis: string;
 }
 
-/** Repeated wherever a wins-based table appears. These are not standings. */
+/**
+ * Repeated wherever a WINS-ordered table appears.
+ *
+ * This used to say championship order could not be reproduced, because no
+ * points column existed. It does now, and the standings on the season page
+ * reproduce the official order exactly -- so the note explains what this
+ * particular table is ordered by, instead of denying the championship exists.
+ */
 function RankingBasisNote() {
   return (
     <p className="note-line">
-      <Badge tone="warning">Not championship standings</Badge> Ranked by wins, then podiums, then average
-      classified position. The dataset has no points column, so official championship order cannot be reproduced.
+      <Badge tone="info">Ordered by wins</Badge> Ranked by wins, then podiums, then average classified
+      position. For the points championship, see the standings on the season page.
     </p>
   );
 }

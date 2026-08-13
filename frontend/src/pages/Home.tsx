@@ -1,6 +1,6 @@
 import { Link } from "react-router-dom";
 import { Async } from "../components/States";
-import { dec, formatDate, num } from "../components/format";
+import { formatDate, num } from "../components/format";
 import { Badge } from "../components/ui";
 import { seriesColour as colourFor } from "../charts/palette";
 import { useApi } from "../hooks/useApi";
@@ -12,7 +12,7 @@ import type { DatasetSummary, Health, Insight, RaceDetail, SeasonRounds, SeasonS
  * panels, a full-width round-by-round strip, then a three-cell footer row.
  *
  * The mockup's cells are populated with championship points, gaps in points,
- * and lap times. The source has no points column and no lap times, so each of
+ * and lap times. Points now exist (race + sprint); lap times still do not, so
  * those cells carries the nearest metric the data does support -- wins, a gap
  * in wins, a classification -- and the panels say "by wins", never
  * "standings". No cell was left out, and no number was invented.
@@ -57,9 +57,11 @@ export function Home() {
       <div className="panel">
         <Async state={season} loadingRows={3}>
           {(summary) => {
-            const leadDriver = summary.drivers[0];
-            const secondDriver = summary.drivers[1];
-            const leadTeam = summary.constructors[0];
+            // Championship leaders, from points -- not the wins proxy these
+            // KPIs used before points existed.
+            const leadDriver = summary.standings.drivers[0];
+            const secondDriver = summary.standings.drivers[1];
+            const leadTeam = summary.standings.constructors[0];
             const uniqueWinners = summary.drivers.filter((d) => d.wins > 0).length;
             const last = rounds.data?.rounds[rounds.data.rounds.length - 1];
             return (
@@ -75,22 +77,26 @@ export function Home() {
                   note="Rounds with a recorded winner"
                 />
                 <Kpi
-                  label="LEADER · DRIVER (BY WINS)"
+                  label="CHAMPION · DRIVER"
                   value={leadDriver ? leadDriver.name.split(" ").slice(-1)[0] : "—"}
-                  sub={leadDriver ? `${leadDriver.wins} wins` : undefined}
-                  note="Not a championship position"
+                  sub={leadDriver ? `${num(leadDriver.points)} pts` : undefined}
+                  note="Championship leader on points"
                 />
                 <Kpi
-                  label="GAP TO P2 (WINS)"
-                  value={leadDriver && secondDriver ? String(leadDriver.wins - secondDriver.wins) : "—"}
-                  sub="wins"
-                  note="Points gap unavailable — no points column"
+                  label="GAP TO P2"
+                  value={
+                    leadDriver && secondDriver
+                      ? num((leadDriver.points ?? 0) - (secondDriver.points ?? 0))
+                      : "—"
+                  }
+                  sub="points"
+                  note="Race and sprint points"
                 />
                 <Kpi
-                  label="LEADER · CONSTRUCTOR (BY WINS)"
+                  label="CHAMPION · CONSTRUCTOR"
                   value={leadTeam ? leadTeam.name : "—"}
-                  sub={leadTeam ? `${leadTeam.wins} wins` : undefined}
-                  note="Not a championship position"
+                  sub={leadTeam ? `${num(leadTeam.points)} pts` : undefined}
+                  note="Championship leader on points"
                 />
                 <Kpi label="UNIQUE WINNERS" value={num(uniqueWinners)} note="Drivers with at least one win" />
                 <Kpi
@@ -104,53 +110,68 @@ export function Home() {
         </Async>
       </div>
 
+      {/*
+        These ARE the championship standings.
+
+        Until points were ingested this page carried a "Not championship
+        standings" warning and ranked by wins, which was correct then and
+        became false the moment `results.points` existed. Championship totals
+        now reproduce the official figures exactly for every season in the
+        dataset, sprint points included.
+
+        The only caveat left is the tie-break: ordering on equal points uses
+        wins then podiums, where the official rule is a countback. That is
+        stated rather than glossed.
+      */}
       <p className="note-line">
-        <Badge tone="warning">Not championship standings</Badge> Ranked by wins, then podiums, then average
-        classified position — the dataset carries no points column.
+        <Badge tone="info">Championship points</Badge> Race and sprint points, as awarded. Ties are
+        broken by wins, then podiums — the official countback rule is not applied.
       </p>
 
       <Async state={season} loadingRows={8}>
         {(summary) => {
-          const drivers = summary.drivers.slice(0, 8);
-          const teams = summary.constructors.slice(0, 8);
-          const teamOrder = summary.constructors.map((c) => c.name);
-          const leadWins = teams[0]?.wins ?? 0;
+          const drivers = summary.standings.drivers.slice(0, 8);
+          const teams = summary.standings.constructors.slice(0, 8);
+          const teamOrder = summary.standings.constructors.map((c) => c.name);
+          const leadPoints = teams[0]?.points ?? 0;
           return (
             <div className="split">
               {/* Mockup § 02: standings are grid rows with a team colour bar,
-                  not a table. PTS/GAP become wins/gap-in-wins -- no points
-                  column exists -- and the header says so. */}
+                  not a table. PTS/GAP are now real points, which is what the
+                  mockup asked for and what the data finally supports. */}
               <div className="split__pane">
                 <div className="pane__head">
-                  <h2 className="pane__title">Drivers · by wins</h2>
-                  <span className="pane__meta mono">{summary.season} · FINAL CLASSIFICATION</span>
+                  <h2 className="pane__title">Drivers' Championship</h2>
+                  <span className="pane__meta mono">{summary.season} · POINTS</span>
                 </div>
-                <div className="standings" role="table" aria-label={`${summary.season} drivers ranked by wins`}>
+                <div className="standings" role="table" aria-label={`${summary.season} drivers' championship standings`}>
                   <div className="standings__head mono" role="row">
                     <span role="columnheader">#</span>
                     <span />
                     <span role="columnheader">DRIVER</span>
-                    <span role="columnheader">PODS</span>
                     <span role="columnheader">W</span>
+                    <span role="columnheader">PTS</span>
                     <span role="columnheader">GAP</span>
                   </div>
-                  {drivers.map((row, i) => (
+                  {drivers.map((row) => (
                     <Link key={row.id} to={`/drivers/${row.id}`} className="standings__row" role="row">
-                      <span className="mono standings__rank">{i + 1}</span>
+                      <span className="mono standings__rank">{row.position}</span>
                       {/* The mockup colours this bar by the driver's team. The
-                          season payload carries no per-driver constructor, so
-                          it stays neutral rather than colouring by guess. */}
+                          standings payload carries no per-driver constructor,
+                          so it stays neutral rather than colouring by guess. */}
                       <span className="standings__flag" />
                       <span className="standings__name">
                         {row.name}
                         <span className="mono standings__sub">
-                          {num(row.entries)} starts · avg P{dec(row.avg_classified_position)}
+                          {num(row.entries)} starts · {num(row.podiums)} podiums
                         </span>
                       </span>
-                      <span className="mono standings__num">{num(row.podiums)}</span>
-                      <span className="mono standings__num standings__num--lead">{num(row.wins)}</span>
+                      <span className="mono standings__num">{num(row.wins)}</span>
+                      <span className="mono standings__num standings__num--lead">{num(row.points)}</span>
                       <span className="mono standings__gap">
-                        {i === 0 ? "—" : `−${drivers[0].wins - row.wins}`}
+                        {row.position === 1
+                          ? "—"
+                          : `−${num((drivers[0].points ?? 0) - (row.points ?? 0))}`}
                       </span>
                     </Link>
                   ))}
@@ -159,33 +180,37 @@ export function Home() {
 
               <div className="split__pane">
                 <div className="pane__head">
-                  <h2 className="pane__title">Constructors · by wins</h2>
-                  <span className="pane__meta mono">{summary.season} · FINAL CLASSIFICATION</span>
+                  <h2 className="pane__title">Constructors' Championship</h2>
+                  <span className="pane__meta mono">{summary.season} · POINTS</span>
                 </div>
-                <div className="standings standings--team" role="table" aria-label={`${summary.season} constructors ranked by wins`}>
+                <div className="standings standings--team" role="table" aria-label={`${summary.season} constructors' championship standings`}>
                   <div className="standings__head mono" role="row">
                     <span role="columnheader">#</span>
                     <span />
                     <span role="columnheader">CONSTRUCTOR</span>
                     <span role="columnheader">SHARE</span>
-                    <span role="columnheader">W</span>
+                    <span role="columnheader">PTS</span>
                     <span role="columnheader">GAP</span>
                   </div>
-                  {teams.map((row, i) => (
+                  {teams.map((row) => (
                     <Link key={row.id} to={`/constructors/${row.id}`} className="standings__row" role="row">
-                      <span className="mono standings__rank">{i + 1}</span>
+                      <span className="mono standings__rank">{row.position}</span>
                       <span className="standings__flag" style={{ background: colourFor(row.name, teamOrder) }} />
                       <span className="standings__name">{row.name}</span>
-                      <span className="standings__share" title={`${row.wins} of ${leadWins} leader wins`}>
+                      <span className="standings__share" title={`${row.points} of ${leadPoints} leader points`}>
                         <span
                           style={{
-                            width: leadWins ? `${(row.wins / leadWins) * 100}%` : 0,
+                            width: leadPoints ? `${((row.points ?? 0) / leadPoints) * 100}%` : 0,
                             background: colourFor(row.name, teamOrder),
                           }}
                         />
                       </span>
-                      <span className="mono standings__num standings__num--lead">{num(row.wins)}</span>
-                      <span className="mono standings__gap">{i === 0 ? "—" : `−${teams[0].wins - row.wins}`}</span>
+                      <span className="mono standings__num standings__num--lead">{num(row.points)}</span>
+                      <span className="mono standings__gap">
+                        {row.position === 1
+                          ? "—"
+                          : `−${num((teams[0].points ?? 0) - (row.points ?? 0))}`}
+                      </span>
                     </Link>
                   ))}
                 </div>

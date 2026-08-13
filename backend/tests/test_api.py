@@ -133,9 +133,46 @@ def test_insights_are_traceable_to_a_query(client):
     assert all(i["basis"] for i in insights)
 
 
-def test_dataset_summary_declares_unavailable_fields(client):
+def test_dataset_summary_availability_matches_the_database(client):
+    """Availability must be measured, never asserted.
+
+    This test used to require "championship points" in `unavailable_fields`,
+    which was correct until points were ingested and then became a lie the API
+    served to users -- the UI renders this list under "What this dataset cannot
+    tell you". The list is now derived from row counts, and this checks the
+    derivation against the database rather than against a remembered state.
+    """
     body = client.get("/api/dataset/summary").json()
-    assert "championship points" in body["unavailable_fields"]
+    available = " ".join(body["available_fields"])
+    unavailable = body["unavailable_fields"]
+
+    # Ingested, so each must be advertised as available.
+    for field in ("championship points", "finishing status", "grid position",
+                  "qualifying", "sprint results", "pit stops"):
+        assert field in available, f"{field} is ingested but not advertised"
+        assert field not in unavailable
+
+    # No source supplies these anywhere, so they must stay declared absent.
+    for field in ("fastest lap", "tyre compounds", "telemetry", "car specifications"):
+        assert field in unavailable
+
+    # And nothing may be called unavailable while rows exist for it.
+    from backend.app.db import connect
+
+    conn = connect()
+    populated = {
+        "championship points": "SELECT COUNT(points) FROM results",
+        "finishing status (DNF / DNS / DSQ)": "SELECT COUNT(classification) FROM results",
+        "pit stops": "SELECT COUNT(*) FROM pit_stops",
+        "qualifying": "SELECT COUNT(*) FROM qualifying_results",
+    }
+    try:
+        for field, sql in populated.items():
+            if conn.execute(sql).fetchone()[0]:
+                assert field not in unavailable, f"{field} has rows but is declared unavailable"
+    finally:
+        conn.close()
+
     assert body["known_issues"]
     # No filesystem paths or connection details leak to the client.
     assert "f1.db" not in str(body)
