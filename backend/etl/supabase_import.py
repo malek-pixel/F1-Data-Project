@@ -53,6 +53,12 @@ CIRCUIT_MAP_CSV = Path(__file__).with_name("circuit_map.csv")
 ENRICHMENT_CSV = REPO_ROOT / "data" / "jolpica_results.csv"
 # Sprint races, 2021 onward. Separate event, separate table.
 SPRINT_CSV = REPO_ROOT / "data" / "jolpica_sprints.csv"
+# Descriptive columns the dimension tables were created for and left NULL.
+DRIVERS_CSV = REPO_ROOT / "data" / "jolpica_drivers.csv"
+CONSTRUCTORS_CSV = REPO_ROOT / "data" / "jolpica_constructors.csv"
+CIRCUITS_CSV = REPO_ROOT / "data" / "jolpica_circuits.csv"
+# Qualifying. Coverage is partial before 2003 -- see migration 12.
+QUALIFYING_CSV = REPO_ROOT / "data" / "jolpica_qualifying.csv"
 CIRCUIT_ASSET_DIR = REPO_ROOT / "frontend" / "public" / "circuits"
 
 DATASET_KEY = "ergast_results"
@@ -424,6 +430,199 @@ def promote_enrichment(conn, report: Report) -> None:
         )
 
 
+def promote_qualifying(conn, report: Report, dataset_id: int) -> None:
+    """Load qualifying into its own table.
+
+    Coverage is partial before 2003 and that is expected, so this deliberately
+    does NOT check row count against `results`. What it does check is that
+    every row present in the file landed: a shortfall means a driver or race
+    failed to resolve, which is a real failure and must not be mistaken for
+    the known source gap.
+    """
+    if not QUALIFYING_CSV.exists():
+        report.check("qualifying source", "warn", "warning", 0,
+                     f"{QUALIFYING_CSV.name} not found -- qualifying not loaded")
+        return
+
+    with QUALIFYING_CSV.open(newline="", encoding="utf-8") as handle:
+        rows = list(csv.DictReader(handle))
+    report.counts["qualifying source rows"] = len(rows)
+
+    def blank_to_none(value: str) -> str | None:
+        # "" means the segment did not exist or no time was set. NULL, not "".
+        return (value or "").strip() or None
+
+    payload = [
+        (
+            int(r["position"]), blank_to_none(r["q1"]), blank_to_none(r["q2"]),
+            blank_to_none(r["q3"]), dataset_id,
+            int(r["season"]), r["driver"].strip(), r["constructor"].strip(),
+            int(r["round"]),
+        )
+        for r in rows
+    ]
+
+    with conn.cursor() as cur:
+        cur.executemany(
+            """
+            INSERT INTO qualifying_results
+                (race_id, driver_id, constructor_id, position, q1, q2, q3, dataset_id)
+            SELECT ra.id, d.id, co.id, %s, %s, %s, %s, %s
+            FROM races ra
+            JOIN seasons s       ON s.id = ra.season_id AND s.year = %s
+            JOIN drivers d       ON d.display_name = %s
+            JOIN constructors co ON co.constructor_name = %s
+            WHERE ra.round = %s
+            ON CONFLICT (race_id, driver_id) DO UPDATE
+              SET constructor_id = excluded.constructor_id,
+                  position       = excluded.position,
+                  q1 = excluded.q1, q2 = excluded.q2, q3 = excluded.q3,
+                  updated_at     = now()
+            """,
+            payload,
+        )
+
+        cur.execute("SELECT count(*) FROM qualifying_results")
+        loaded = cur.fetchone()[0]
+        report.counts["qualifying_results in database"] = loaded
+        report.check(
+            "every qualifying row loaded",
+            "pass" if loaded == len(rows) else "fail",
+            "info" if loaded == len(rows) else "fatal",
+            len(rows) - loaded,
+            "qualifying rows whose driver, constructor or race did not resolve",
+        )
+
+        # One pole per race, wherever the session is recorded at all.
+        cur.execute(
+            "SELECT count(*) FROM (SELECT race_id FROM qualifying_results"
+            " WHERE position = 1 GROUP BY race_id HAVING count(*) > 1) x"
+        )
+        dupes = cur.fetchone()[0]
+        report.check(
+            "one pole per race", "pass" if dupes == 0 else "fail",
+            "info" if dupes == 0 else "fatal", dupes,
+            "races with more than one qualifying P1",
+        )
+
+        # A session must not appear before the format that created it.
+        #
+        # This check first encoded the assumption "Q1/Q2/Q3 began in 2006" and
+        # failed on 107 rows -- correctly, because the assumption was wrong.
+        # 2005 opened with AGGREGATE qualifying: two flying laps, one on
+        # Saturday and one on Sunday, recorded as Q1 and Q2 and summed. So Q2
+        # in 2005 is real data, not corruption.
+        #
+        # Q3 is the genuine 2006 marker: the three-segment knockout format.
+        # This is exactly why modern rules must never be assumed to hold
+        # historically -- the source was right and the check was wrong.
+        cur.execute(
+            """SELECT count(*) FROM qualifying_results q
+               JOIN races ra ON ra.id = q.race_id
+               JOIN seasons s ON s.id = ra.season_id
+               WHERE (s.year < 2006 AND q.q3 IS NOT NULL)
+                  OR (s.year < 2005 AND q.q2 IS NOT NULL)"""
+        )
+        anachronistic = cur.fetchone()[0]
+        report.check(
+            "no session predates its format",
+            "pass" if anachronistic == 0 else "fail",
+            "info" if anachronistic == 0 else "fatal", anachronistic,
+            "Q3 before 2006, or Q2 before the 2005 aggregate format",
+        )
+
+
+def promote_dimensions(conn, report: Report) -> None:
+    """Fill the descriptive columns the dimension tables were created for.
+
+    `drivers.nationality`, `drivers.date_of_birth`, `circuits.latitude` and
+    friends have been NULL since the schema was written, honestly meaning "not
+    yet known". This is the source that knows.
+
+    Empty strings become NULL, never "". A blank string would pass a NOT NULL
+    check and satisfy a CHECK constraint while meaning nothing -- exactly the
+    placeholder-as-data problem the project forbids. It also matters
+    concretely: `abbreviation` is constrained to ^[A-Z]{3}$ and 24 drivers
+    predate three-letter codes; 67 predate permanent numbers.
+
+    Still NULL after this, because no source supplies them: circuit length,
+    number of corners, lap records.
+    """
+    def rows_of(path: Path) -> list[dict]:
+        if not path.exists():
+            return []
+        with path.open(newline="", encoding="utf-8") as handle:
+            return list(csv.DictReader(handle))
+
+    def blank_to_none(value: str | None) -> str | None:
+        value = (value or "").strip()
+        return value or None
+
+    drivers = rows_of(DRIVERS_CSV)
+    constructors = rows_of(CONSTRUCTORS_CSV)
+    circuits = rows_of(CIRCUITS_CSV)
+
+    if not (drivers or constructors or circuits):
+        report.check("dimension enrichment", "warn", "warning", 0,
+                     "no dimension CSVs -- run python -m backend.etl.build_dimensions")
+        return
+
+    with conn.cursor() as cur:
+        cur.executemany(
+            """UPDATE drivers SET nationality = %s, date_of_birth = %s::date,
+                      abbreviation = %s, permanent_number = %s::int, updated_at = now()
+               WHERE display_name = %s""",
+            [
+                (
+                    blank_to_none(r["nationality"]),
+                    blank_to_none(r["date_of_birth"]),
+                    blank_to_none(r["abbreviation"]),
+                    blank_to_none(r["permanent_number"]),
+                    r["driver"].strip(),
+                )
+                for r in drivers
+            ],
+        )
+        cur.executemany(
+            "UPDATE constructors SET nationality = %s, updated_at = now()"
+            " WHERE constructor_name = %s",
+            [(blank_to_none(r["nationality"]), r["constructor"].strip()) for r in constructors],
+        )
+        cur.executemany(
+            """UPDATE circuits SET official_name = %s, locality = %s,
+                      latitude = %s::numeric, longitude = %s::numeric,
+                      source_url = %s, updated_at = now()
+               WHERE circuit_key = %s""",
+            [
+                (
+                    blank_to_none(r["official_name"]), blank_to_none(r["locality"]),
+                    blank_to_none(r["latitude"]), blank_to_none(r["longitude"]),
+                    blank_to_none(r["source_url"]), r["circuit_key"].strip(),
+                )
+                for r in circuits
+            ],
+        )
+
+        for table, column, expected in (
+            ("drivers", "nationality", len(drivers)),
+            ("drivers", "date_of_birth", len(drivers)),
+            ("constructors", "nationality", len(constructors)),
+            ("circuits", "latitude", len(circuits)),
+        ):
+            cur.execute(f"SELECT count({column}) FROM {table}")
+            got = cur.fetchone()[0]
+            report.check(
+                f"{table}.{column} populated",
+                "pass" if got == expected else "fail",
+                "info" if got == expected else "fatal",
+                expected - got,
+                f"{table} rows still missing {column} after enrichment",
+            )
+        report.counts["drivers enriched"] = len(drivers)
+        report.counts["constructors enriched"] = len(constructors)
+        report.counts["circuits enriched"] = len(circuits)
+
+
 def promote_sprints(conn, report: Report, dataset_id: int) -> None:
     """Load sprint results into their own table.
 
@@ -631,6 +830,8 @@ def main() -> int:
             promote(conn, report, rules, dataset_id)
             promote_enrichment(conn, report)
             promote_sprints(conn, report, dataset_id)
+            promote_dimensions(conn, report)
+            promote_qualifying(conn, report, dataset_id)
             reconcile(conn, report)
             persist_report(conn, report)
 

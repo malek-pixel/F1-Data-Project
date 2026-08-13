@@ -209,3 +209,143 @@ def test_sprints_are_a_separate_event_not_extra_race_rows():
         assert earliest >= 2021, "a sprint is recorded before the format existed"
     finally:
         conn.close()
+
+
+# --------------------------------------------------------------- qualifying
+
+
+def test_qualifying_coverage_is_partial_before_2003_and_says_so():
+    """The gap is real and must stay visible.
+
+    2000-2002 have 6-24% qualifying coverage because the source has little
+    data for them. If a future load ever "fixed" that by inventing rows, or if
+    a later season silently lost its qualifying, this notices.
+    """
+    conn = connect()
+    try:
+        per_season = dict(
+            conn.execute(
+                "SELECT ra.season, COUNT(*) FROM qualifying_results q"
+                " JOIN races ra ON ra.id = q.race_id GROUP BY ra.season"
+            ).fetchall()
+        )
+        results = dict(
+            conn.execute(
+                "SELECT ra.season, COUNT(*) FROM results r"
+                " JOIN races ra ON ra.id = r.race_id GROUP BY ra.season"
+            ).fetchall()
+        )
+        for season in (2000, 2001, 2002):
+            assert per_season.get(season, 0) < results[season] * 0.5, (
+                f"{season} qualifying is suddenly near-complete -- verify the "
+                f"source rather than assuming the gap was filled legitimately"
+            )
+        for season in range(2003, 2026):
+            ratio = per_season.get(season, 0) / results[season]
+            assert ratio > 0.95, f"{season} qualifying coverage dropped to {ratio:.0%}"
+    finally:
+        conn.close()
+
+
+def test_no_qualifying_session_predates_its_format():
+    """Modern rules must never be applied to earlier eras.
+
+    Q3 marks the 2006 three-segment knockout. Q2 marks 2005's aggregate
+    format, where two flying laps were recorded and summed -- a real historical
+    format that an earlier version of this check wrongly rejected.
+    """
+    conn = connect()
+    try:
+        bad_q3 = conn.execute(
+            "SELECT COUNT(*) FROM qualifying_results q JOIN races ra ON ra.id = q.race_id"
+            " WHERE ra.season < 2006 AND q.q3 IS NOT NULL"
+        ).fetchone()[0]
+        bad_q2 = conn.execute(
+            "SELECT COUNT(*) FROM qualifying_results q JOIN races ra ON ra.id = q.race_id"
+            " WHERE ra.season < 2005 AND q.q2 IS NOT NULL"
+        ).fetchone()[0]
+        assert bad_q3 == 0 and bad_q2 == 0
+    finally:
+        conn.close()
+
+
+def test_qualifying_position_is_not_treated_as_the_grid():
+    """They genuinely differ, and conflating them would be a real error.
+
+    Penalties and pit-lane starts move drivers between qualifying and the
+    grid, so the two columns must not be interchangeable.
+    """
+    conn = connect()
+    try:
+        differing = conn.execute(
+            """SELECT COUNT(*) FROM qualifying_results q
+               JOIN results r ON r.race_id = q.race_id AND r.driver_id = q.driver_id
+               WHERE r.grid IS NOT NULL AND r.grid <> q.position"""
+        ).fetchone()[0]
+        assert differing > 0, (
+            "qualifying position and race grid are identical everywhere, which "
+            "would mean one of them is not what it claims to be"
+        )
+    finally:
+        conn.close()
+
+
+def test_qualifying_p1_is_not_published_as_official_poles():
+    """KNOWN DISCREPANCY -- deliberately not resolved, deliberately not hidden.
+
+    Counting qualifying P1 gives Lewis Hamilton 107; his official pole count is
+    104. Two are sprint weekends, where 2021 awarded pole to the sprint winner
+    rather than to the fastest qualifier. That leaves one unexplained.
+
+    Until that is investigated, "qualifying P1" must not be relabelled "poles"
+    anywhere a user can see. This test pins the raw number so the discrepancy
+    cannot quietly change, and fails loudly if it does -- at which point the
+    investigation, not the label, is what should be updated.
+    """
+    conn = connect()
+    try:
+        p1 = conn.execute(
+            "SELECT COUNT(*) FROM qualifying_results q JOIN drivers d ON d.id = q.driver_id"
+            " WHERE q.position = 1 AND d.name = 'Lewis Hamilton'"
+        ).fetchone()[0]
+        assert p1 == 107, (
+            f"Hamilton qualifying P1 is now {p1}, was 107. The gap against his "
+            f"official 104 poles needs re-investigating before this is exposed "
+            f"as a pole count."
+        )
+    finally:
+        conn.close()
+
+
+# --------------------------------------------------------------- dimensions
+
+
+def test_dimension_detail_is_populated_where_the_source_has_it():
+    conn = connect()
+    try:
+        assert conn.execute("SELECT COUNT(nationality) FROM drivers").fetchone()[0] == 129
+        assert conn.execute("SELECT COUNT(date_of_birth) FROM drivers").fetchone()[0] == 129
+        assert conn.execute("SELECT COUNT(nationality) FROM constructors").fetchone()[0] == 38
+        assert conn.execute("SELECT COUNT(latitude) FROM circuits").fetchone()[0] == 39
+    finally:
+        conn.close()
+
+
+def test_absent_driver_detail_is_null_not_blank():
+    """24 drivers predate three-letter codes, 67 predate permanent numbers.
+
+    Those must be NULL. An empty string would render as nothing while
+    comparing equal to itself -- "unknown" laundered into "known to be empty".
+    """
+    conn = connect()
+    try:
+        blanks = conn.execute(
+            "SELECT COUNT(*) FROM drivers WHERE abbreviation = '' OR nationality = ''"
+        ).fetchone()[0]
+        assert blanks == 0, "empty strings stored where the source has no value"
+        missing = conn.execute(
+            "SELECT COUNT(*) FROM drivers WHERE abbreviation IS NULL"
+        ).fetchone()[0]
+        assert missing > 0, "every driver has a code, which the source does not support"
+    finally:
+        conn.close()

@@ -183,6 +183,19 @@ _CHECKS: list[tuple[str, str, int, str, str]] = [
     ("sprint_orphan_race",
      "SELECT COUNT(*) FROM sprint_results s LEFT JOIN races ra ON ra.id = s.race_id"
      " WHERE ra.id IS NULL", 0, FAIL, "every sprint points at a real race"),
+    ("qualifying_orphan_race",
+     "SELECT COUNT(*) FROM qualifying_results q LEFT JOIN races ra ON ra.id = q.race_id"
+     " WHERE ra.id IS NULL", 0, FAIL, "every qualifying row points at a real race"),
+    ("qualifying_duplicate_pole",
+     "SELECT COUNT(*) FROM (SELECT race_id FROM qualifying_results WHERE position = 1"
+     " GROUP BY race_id HAVING COUNT(*) > 1)", 0, FAIL, "no race has two qualifying P1s"),
+    # Q3 marks the 2006 three-segment format; Q2 the 2005 aggregate format.
+    # An earlier appearance would mean a modern rule applied retroactively.
+    ("session_predates_its_format",
+     "SELECT COUNT(*) FROM qualifying_results q JOIN races ra ON ra.id = q.race_id"
+     " WHERE (ra.season < 2006 AND q.q3 IS NOT NULL)"
+     "    OR (ra.season < 2005 AND q.q2 IS NOT NULL)", 0, FAIL,
+     "no qualifying session predates the format that created it"),
     ("sprint_duplicate_winner",
      "SELECT COUNT(*) FROM (SELECT race_id FROM sprint_results WHERE position = 1"
      " GROUP BY race_id HAVING COUNT(*) > 1)", 0, FAIL,
@@ -208,7 +221,7 @@ def run_checks(conn: sqlite3.Connection) -> list[Check]:
 # F1 source, and saying otherwise would be the claim the brief forbids.
 # ---------------------------------------------------------------------------
 _ABSENT = [
-    "qualifying", "practice", "lap_times", "pit_stops",
+    "practice", "lap_times", "pit_stops",
     "cars", "engines", "tyres",
 ]
 
@@ -242,6 +255,14 @@ def coverage_matrix(conn: sqlite3.Connection) -> list[dict]:
         # Sprints exist only from 2021; reporting the full span would overstate
         # the coverage of a dataset that cannot exist before then.
         ("sprints", "SELECT COUNT(*) FROM sprint_results", "2021-" + str(hi), _VALIDATED),
+        # Partial before 2003 and complete after. Reporting a single span
+        # would overstate the early seasons, so the gap is named instead.
+        ("qualifying", "SELECT COUNT(*) FROM qualifying_results",
+         "2003-" + str(hi) + " complete; 2000-2002 partial (6-24%)", _STRUCTURAL),
+        ("driver_detail",
+         "SELECT COUNT(*) FROM drivers WHERE nationality IS NOT NULL", span, _VALIDATED),
+        ("circuit_location",
+         "SELECT COUNT(*) FROM circuits WHERE latitude IS NOT NULL", span, _STRUCTURAL),
     ]
 
     rows = [

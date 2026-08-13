@@ -136,6 +136,54 @@ def fetch_season_sprints(season: int, refresh: bool = False) -> list[dict]:
     return rows
 
 
+def fetch_season_qualifying(season: int, refresh: bool = False) -> list[dict]:
+    """Every qualifying result for `season`.
+
+    Coverage is genuinely partial: the source has little qualifying before
+    2003, and Q1/Q2/Q3 only exist from 2006 -- earlier eras used one- or
+    two-lap formats with a single time. Missing sessions stay absent rather
+    than being filled with a duplicated time.
+    """
+    CACHE.mkdir(parents=True, exist_ok=True)
+    path = CACHE / f"jolpica_{season}_qualifying.json"
+    if path.exists() and not refresh:
+        return json.loads(path.read_text(encoding="utf-8"))
+
+    rows: list[dict] = []
+    offset = 0
+    while True:
+        data = _get(f"{season}/qualifying.json", offset)
+        races = data["RaceTable"]["Races"]
+        for race in races:
+            for result in race.get("QualifyingResults", []):
+                driver = result["Driver"]
+                rows.append({
+                    "season": int(race["season"]),
+                    "round": int(race["round"]),
+                    "position": int(result["position"]),
+                    "driver": f"{driver['givenName']} {driver['familyName']}",
+                    "constructor": result["Constructor"]["name"],
+                    "q1": result.get("Q1") or "",
+                    "q2": result.get("Q2") or "",
+                    "q3": result.get("Q3") or "",
+                })
+        total = int(data["total"])
+        offset += PAGE
+        if offset >= total or not races:
+            break
+        time.sleep(PAUSE_SECONDS)
+
+    path.write_text(json.dumps(rows, indent=1, ensure_ascii=False), encoding="utf-8")
+    return rows
+
+
+def fetch_all_qualifying(seasons: list[int], refresh: bool = False) -> list[dict]:
+    out: list[dict] = []
+    for season in seasons:
+        out.extend(fetch_season_qualifying(season, refresh))
+    return out
+
+
 def fetch_all_sprints(seasons: list[int], refresh: bool = False) -> list[dict]:
     out: list[dict] = []
     for season in seasons:

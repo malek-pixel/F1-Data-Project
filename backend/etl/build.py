@@ -94,6 +94,7 @@ def load_raw(path: Path) -> list[dict[str, str]]:
 
 ENRICHMENT_CSV = Path(__file__).resolve().parents[2] / "data" / "jolpica_results.csv"
 SPRINT_CSV = Path(__file__).resolve().parents[2] / "data" / "jolpica_sprints.csv"
+QUALIFYING_CSV = Path(__file__).resolve().parents[2] / "data" / "jolpica_qualifying.csv"
 
 # Columns pulled from the enrichment, in the order the INSERT expects them.
 _ENRICHMENT_FIELDS = ("classification", "position_text", "status", "points", "grid", "laps")
@@ -113,6 +114,14 @@ def load_enrichment() -> dict[tuple[int, int, int], dict[str, str]]:
             (int(r["season"]), int(r["round"]), int(r["position"])): r
             for r in csv.DictReader(handle)
         }
+
+
+def load_dimension_rows(path: Path) -> list[dict[str, str]]:
+    """All rows of an optional enrichment CSV, or [] when it is absent."""
+    if not path.exists():
+        return []
+    with path.open(newline="", encoding="utf-8") as handle:
+        return list(csv.DictReader(handle))
 
 
 def load_sprints() -> list[dict[str, str]]:
@@ -140,6 +149,40 @@ def _enrichment_values(enrichment: dict, row: dict) -> tuple:
         int(match["grid"]),
         int(match["laps"]),
     )
+
+
+DRIVERS_CSV = Path(__file__).resolve().parents[2] / "data" / "jolpica_drivers.csv"
+CONSTRUCTORS_CSV = Path(__file__).resolve().parents[2] / "data" / "jolpica_constructors.csv"
+CIRCUITS_CSV = Path(__file__).resolve().parents[2] / "data" / "jolpica_circuits.csv"
+
+
+def load_dimension(path: Path, key: str) -> dict[str, dict[str, str]]:
+    """Descriptive rows keyed by `key`. Empty when the file is absent."""
+    if not path.exists():
+        return {}
+    with path.open(newline="", encoding="utf-8") as handle:
+        return {r[key]: r for r in csv.DictReader(handle)}
+
+
+def _blank_to_none(value: str | None) -> str | None:
+    """"" means the source has no value -- store NULL, never an empty string.
+
+    A blank string is a value that compares equal to itself and renders as
+    nothing, which is precisely how "unknown" gets silently laundered into
+    "known to be empty".
+    """
+    value = (value or "").strip()
+    return value or None
+
+
+def _int_or_none(value: str | None) -> int | None:
+    value = (value or "").strip()
+    return int(value) if value else None
+
+
+def _float_or_none(value: str | None) -> float | None:
+    value = (value or "").strip()
+    return float(value) if value else None
 
 
 def load_circuit_map(path: Path) -> list[dict[str, str]]:
@@ -276,12 +319,20 @@ PRAGMA foreign_keys = ON;
 
 CREATE TABLE drivers (
     id      INTEGER PRIMARY KEY,
-    name    TEXT NOT NULL UNIQUE
+    name    TEXT NOT NULL UNIQUE,
+    -- Descriptive data from data/jolpica_drivers.csv. NULL where the source
+    -- genuinely has none: 24 drivers predate three-letter codes and 67
+    -- predate permanent numbers, so those are unknown, not blank.
+    nationality      TEXT,
+    date_of_birth    TEXT,
+    abbreviation     TEXT,
+    permanent_number INTEGER
 );
 
 CREATE TABLE constructors (
     id      INTEGER PRIMARY KEY,
-    name    TEXT NOT NULL UNIQUE
+    name    TEXT NOT NULL UNIQUE,
+    nationality TEXT
 );
 
 CREATE TABLE circuits (
@@ -291,7 +342,15 @@ CREATE TABLE circuits (
     country  TEXT NOT NULL,
     -- 0 when no track-map SVG ships for this circuit; the UI shows a
     -- "map unavailable" state rather than substituting a placeholder shape.
-    has_map  INTEGER NOT NULL
+    has_map  INTEGER NOT NULL,
+    -- From data/jolpica_circuits.csv, matched to `slug` by shared races
+    -- rather than by name. Length, corner count and lap records stay absent:
+    -- no source supplies them, so they are not columns here at all.
+    official_name TEXT,
+    locality      TEXT,
+    latitude      REAL,
+    longitude     REAL,
+    source_url    TEXT
 );
 
 CREATE TABLE races (
@@ -330,6 +389,23 @@ CREATE TABLE results (
     -- 0 is a REAL value: a pit lane start. It is not "unknown".
     grid            INTEGER CHECK (grid >= 0),
     laps            INTEGER CHECK (laps >= 0),
+    UNIQUE (race_id, driver_id)
+);
+
+CREATE TABLE qualifying_results (
+    id              INTEGER PRIMARY KEY,
+    race_id         INTEGER NOT NULL REFERENCES races(id),
+    driver_id       INTEGER NOT NULL REFERENCES drivers(id),
+    constructor_id  INTEGER NOT NULL REFERENCES constructors(id),
+    -- Qualifying classification, NOT the starting grid: penalties and
+    -- pit-lane starts change the grid afterwards. Use results.grid for that.
+    position        INTEGER NOT NULL,
+    -- Raw source times ("1:23.456"). NULL means the segment did not exist in
+    -- that era, or no time was set -- never zero. Q2 first appears in 2005
+    -- (aggregate format), Q3 in 2006 (three-segment knockout).
+    q1              TEXT,
+    q2              TEXT,
+    q3              TEXT,
     UNIQUE (race_id, driver_id)
 );
 
@@ -382,12 +458,39 @@ def load(rows: list[dict], db_path: Path, report: Report) -> None:
         circuit_rows = {r["circuit"]["slug"]: r["circuit"] for r in rows}
         circuits = {slug: i for i, slug in enumerate(sorted(circuit_rows), start=1)}
 
-        conn.executemany("INSERT INTO drivers (id, name) VALUES (?, ?)", [(i, n) for n, i in drivers.items()])
+        # Descriptive data, keyed by name. Absent file -> all NULL, which is
+        # the honest reading of "this build does not know".
+        driver_detail = load_dimension(DRIVERS_CSV, "driver")
+        constructor_detail = load_dimension(CONSTRUCTORS_CSV, "constructor")
+        circuit_detail = load_dimension(CIRCUITS_CSV, "circuit_key")
+
         conn.executemany(
-            "INSERT INTO constructors (id, name) VALUES (?, ?)", [(i, n) for n, i in constructors.items()]
+            """INSERT INTO drivers
+                 (id, name, nationality, date_of_birth, abbreviation, permanent_number)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            [
+                (
+                    i, n,
+                    _blank_to_none(driver_detail.get(n, {}).get("nationality")),
+                    _blank_to_none(driver_detail.get(n, {}).get("date_of_birth")),
+                    _blank_to_none(driver_detail.get(n, {}).get("abbreviation")),
+                    _int_or_none(driver_detail.get(n, {}).get("permanent_number")),
+                )
+                for n, i in drivers.items()
+            ],
         )
         conn.executemany(
-            "INSERT INTO circuits (id, slug, name, country, has_map) VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO constructors (id, name, nationality) VALUES (?, ?, ?)",
+            [
+                (i, n, _blank_to_none(constructor_detail.get(n, {}).get("nationality")))
+                for n, i in constructors.items()
+            ],
+        )
+        conn.executemany(
+            """INSERT INTO circuits
+                 (id, slug, name, country, has_map,
+                  official_name, locality, latitude, longitude, source_url)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             [
                 (
                     circuits[slug],
@@ -395,6 +498,11 @@ def load(rows: list[dict], db_path: Path, report: Report) -> None:
                     circuit_rows[slug]["circuit_name"],
                     circuit_rows[slug]["country"],
                     int((CIRCUIT_ASSET_DIR / f"{slug}.svg").exists()),
+                    _blank_to_none(circuit_detail.get(slug, {}).get("official_name")),
+                    _blank_to_none(circuit_detail.get(slug, {}).get("locality")),
+                    _float_or_none(circuit_detail.get(slug, {}).get("latitude")),
+                    _float_or_none(circuit_detail.get(slug, {}).get("longitude")),
+                    _blank_to_none(circuit_detail.get(slug, {}).get("source_url")),
                 )
                 for slug in circuits
             ],
@@ -436,6 +544,27 @@ def load(rows: list[dict], db_path: Path, report: Report) -> None:
                     *_enrichment_values(enrichment, r),
                 )
                 for r in rows
+            ],
+        )
+
+        qualifying = load_dimension_rows(QUALIFYING_CSV)
+        conn.executemany(
+            """INSERT INTO qualifying_results
+                 (race_id, driver_id, constructor_id, position, q1, q2, q3)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            [
+                (
+                    races[(int(q["season"]), int(q["round"]))],
+                    drivers[q["driver"]],
+                    constructors[q["constructor"]],
+                    int(q["position"]),
+                    _blank_to_none(q["q1"]),
+                    _blank_to_none(q["q2"]),
+                    _blank_to_none(q["q3"]),
+                )
+                for q in qualifying
+                if (int(q["season"]), int(q["round"])) in races
+                and q["driver"] in drivers and q["constructor"] in constructors
             ],
         )
 

@@ -67,12 +67,10 @@ and Jolpica is authoritative but not infallible.
 
 | Missing | Blocks |
 |---|---|
-| **Qualifying** | Pole positions, grid-vs-qualifying analysis |
 | **Lap times** | Race pace, stint analysis |
 | **Pit stops** | Strategy analysis |
 | **Practice sessions** | Not modelled |
 | **Pre-2000 seasons** | Data starts 2000; Jolpica has 1950 onward |
-| **Driver/circuit detail columns** | Fetched but not yet loaded into their (existing, empty) columns |
 
 All are reachable from Jolpica with the pipeline that now works.
 
@@ -110,3 +108,47 @@ gated by 31 checks, and fails closed.
 **Not done:** qualifying, laps, pit stops and pre-2000 are still absent; the
 app still reads SQLite rather than Supabase; and no frontend work has been
 done, so none of the new data is visible to a user yet.
+
+---
+
+## Session 2 additions (2026-08-13, later)
+
+Added and verified:
+
+| Dataset | Rows | Coverage |
+|---|---|---|
+| Qualifying | 9,577 | Complete 2003–2025; **partial 2000–2002 (6–24%)** — a real source gap, represented as absent rows, never invented |
+| Driver detail | 129 | Nationality + DOB 100%. Abbreviation 105/129, permanent number 62/129 — the rest are NULL because those drivers predate the concepts |
+| Constructor nationality | 38 | 100% |
+| Circuit location | 39 | Official name, locality, lat/long. Matched to slugs **via shared races**, not by name; the build fails if that mapping is not 1:1 |
+
+**Circuit length, corner count and lap records remain absent** — no source
+supplies them, so they are not columns at all.
+
+### A wrong assumption, caught by its own check
+
+The first qualifying load asserted "Q1/Q2/Q3 began in 2006" and failed on 107
+rows, rolling back. The assumption was wrong: **2005 opened with aggregate
+qualifying** — two flying laps, Saturday and Sunday, recorded as Q1 and Q2 and
+summed. The source was right. Q3 is the true 2006 marker. The check now encodes
+the actual history, and this is exactly why modern rules must never be assumed
+to hold for earlier eras.
+
+### OPEN DISCREPANCY — qualifying P1 is not "poles"
+
+Counting qualifying P1 gives Lewis Hamilton **107**; his official pole count is
+**104**. Two are sprint weekends, where 2021 awarded pole to the sprint winner
+rather than the fastest qualifier. **That leaves one unexplained.**
+
+Until it is investigated, qualifying P1 must **not** be relabelled "poles"
+anywhere a user can see it. `test_qualifying_p1_is_not_published_as_official_poles`
+pins the number so the discrepancy cannot drift silently.
+
+### Still not done
+
+- **Lap times** (~470k rows) and **pit stops** — not started
+- **Practice sessions** — not started
+- **Pre-2000 seasons** — not started; needs your call, it roughly triples the dataset
+- **Supabase views** still predate every column added today, so the SQL and
+  Python analytics have drifted apart
+- **Frontend** — still shows none of this
