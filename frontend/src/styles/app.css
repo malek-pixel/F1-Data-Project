@@ -8,6 +8,21 @@
   min-height: 100vh;
 }
 
+/* Present for screen readers and keyboard order, absent visually. Clip rather
+   than display:none, which would remove it from the accessibility tree too. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
 .skip-link {
   position: absolute;
   top: -48px;
@@ -36,6 +51,7 @@
   position: sticky;
   top: 0;
   height: 100vh;
+  overflow-y: auto;
 }
 
 .rail__brand {
@@ -69,6 +85,9 @@
   justify-content: center;
   width: 56px;
   height: 40px;
+  /* A short viewport must scroll the rail, never squash its items into each
+     other -- the icons are the only labels this navigation has. */
+  flex-shrink: 0;
   color: var(--text-dim);
   border-left: 2px solid transparent;
 }
@@ -90,6 +109,263 @@
   font-size: 7px;
   letter-spacing: 0.06em;
   color: var(--accent-text);
+}
+
+/* ---------- Motion ----------
+   One easing curve and two durations for everything the pointer drives, so
+   hover states across the app feel like one system rather than a pile of
+   individually-tuned effects. Anything larger than a hover -- entrances,
+   route changes, layout -- is a spring, and lives in components/motion.tsx.
+
+   Every rule here is inside the reduced-motion guard at the bottom of this
+   file, which switches all of it off in one place. */
+
+:root {
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --t-fast: 0.14s;
+  --t-base: 0.22s;
+}
+
+.card,
+.gallery__card,
+.car-card,
+.search-row,
+.rows__row,
+.standings__row,
+.rail__item,
+.chip,
+.stat,
+.record,
+.defs__item,
+.palette__item {
+  transition:
+    background var(--t-fast) ease,
+    border-color var(--t-fast) ease,
+    color var(--t-fast) ease,
+    transform var(--t-base) var(--ease),
+    box-shadow var(--t-base) var(--ease);
+}
+
+/* Cards lift; rows slide. A row that lifted would break the grid rhythm the
+   listings depend on, so horizontal movement carries the hover instead. */
+.card:hover,
+.gallery__card:hover,
+.car-card:hover {
+  transform: translateY(-2px);
+  border-color: var(--text-faint);
+  box-shadow: 0 8px 28px rgb(0 0 0 / 0.35);
+}
+.rows__row:hover,
+.search-row:hover,
+.standings__row:hover {
+  transform: translateX(3px);
+}
+
+/* Links pick up their hover colour rather than snapping to it. */
+a {
+  transition: color var(--t-fast) ease;
+}
+
+/* The track outline in a race row leans in as the row is hovered. */
+.race-row__map {
+  transition:
+    opacity var(--t-base) ease,
+    transform var(--t-base) var(--ease);
+}
+.rows__row:hover .race-row__map {
+  opacity: 1;
+  transform: scale(1.12);
+}
+
+/* Bars and shares grow from nothing on first paint, so a comparison reads as
+   a measurement being taken rather than a static block. */
+.rank-list__bar > span,
+.standings__share > span {
+  animation: bar-grow 0.55s var(--ease) both;
+  transform-origin: left center;
+}
+@keyframes bar-grow {
+  from {
+    transform: scaleX(0);
+  }
+}
+
+/* ---------- Dock rail ---------- */
+
+/* The slot owns the 40px rail rhythm. It must be stated here: the anchor
+   inside it cannot supply the height, and a slot sized by its content
+   collapses to the 16px icon, packing the rail into a cramped stack. */
+.dock__slot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 40px;
+  /* The rail is a fixed-height flex column; without this the slots are
+     compressed when the viewport is short. */
+  flex-shrink: 0;
+}
+.dock__glyph {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform var(--t-fast) var(--ease);
+}
+/* The tooltip is fixed, not absolute: the rail is a 56px overflow-clipped
+   column, so a label inside it would be cut off. */
+.dock__tip {
+  position: fixed;
+  left: 62px;
+  z-index: 60;
+  transform: translateY(-50%);
+  padding: 4px 8px;
+  background: var(--elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  white-space: nowrap;
+  pointer-events: none;
+  box-shadow: 0 6px 20px rgb(0 0 0 / 0.45);
+}
+
+/* ---------- Dynamic island ---------- */
+
+.island {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: var(--elevated);
+  border: 1px solid var(--border);
+  overflow: hidden;
+  /* Belt and braces after the orphaned-label bug: whatever ends up inside,
+     the pill can never widen the nowrap bar enough to scroll the page. */
+  max-width: 40vw;
+}
+.island__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.island__dot--ok {
+  background: var(--success);
+}
+.island__dot--error {
+  background: var(--accent);
+}
+.island__dot--loading {
+  background: var(--text-faint);
+  animation: island-pulse 1.1s ease-in-out infinite;
+}
+.island__text {
+  font-size: 10px;
+  white-space: nowrap;
+}
+.island--error .island__text {
+  color: var(--accent-text);
+}
+@keyframes island-pulse {
+  50% {
+    opacity: 0.25;
+  }
+}
+
+/* ---------- Animated search field ---------- */
+
+.searchfield {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.searchfield--wide {
+  min-width: 240px;
+}
+.searchfield--grow {
+  flex: 1;
+}
+.searchfield__label {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: var(--text-faint);
+}
+.searchfield__box {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  padding: 7px 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  transition:
+    border-color 0.16s ease,
+    box-shadow 0.16s ease;
+}
+.searchfield__box:hover {
+  border-color: var(--text-faint);
+}
+.searchfield__box:focus-within {
+  border-color: var(--info);
+  box-shadow: 0 0 0 3px rgb(0 144 255 / 0.15);
+}
+.searchfield__glyph {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  color: var(--text-faint);
+  flex-shrink: 0;
+}
+.searchfield__spin {
+  display: flex;
+  animation: spin 0.9s linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.searchfield__input {
+  flex: 1;
+  min-width: 0;
+  background: none;
+  border: 0;
+  outline: none;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-sm);
+}
+.searchfield__input::-webkit-search-cancel-button {
+  display: none;
+}
+.searchfield__clear {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  /* 18px circle, 40px target: the box grows through the field's own padding
+     rather than pushing the field taller. */
+  padding: 11px;
+  margin: -11px;
+  box-sizing: content-box;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  color: var(--text-faint);
+  cursor: pointer;
+  flex-shrink: 0;
+  touch-action: manipulation;
+}
+.searchfield__clear:hover {
+  background: var(--elevated);
+  color: var(--text);
 }
 
 /* ---------- Frame bars ---------- */
@@ -175,6 +451,8 @@
   font-size: 12px;
   font-family: inherit;
   cursor: pointer;
+  min-height: 34px;
+  touch-action: manipulation;
 }
 .bar__search:hover {
   border-color: var(--text-faint);
@@ -311,12 +589,6 @@
   font-weight: 700;
   line-height: 1;
 }
-.stat__value--unavailable {
-  font-size: var(--fs-sm);
-  font-weight: 400;
-  color: var(--text-faint);
-  line-height: 1.4;
-}
 .stat__note {
   font-size: var(--fs-xs);
   color: var(--text-dim);
@@ -394,6 +666,14 @@ table.data th.num {
   align-items: center;
   margin-bottom: var(--s4);
 }
+/* Flex items default to min-width:auto, so a control sized by its content
+   refuses to shrink and pushes the page sideways once the row has wrapped as
+   far as it can. Every control may shrink to the gutter instead. */
+.controls > *,
+.field {
+  min-width: 0;
+  max-width: 100%;
+}
 
 .input,
 .select {
@@ -404,6 +684,10 @@ table.data th.num {
   font: inherit;
   font-size: var(--fs-sm);
   padding: 7px 10px;
+  /* An input carries an intrinsic `size`-based width that ignores its
+     container; without this it sets the page's minimum width on a phone. */
+  min-width: 0;
+  max-width: 100%;
 }
 .input::placeholder {
   color: var(--text-faint);
@@ -430,9 +714,20 @@ table.data th.num {
   border-radius: var(--radius-sm);
   cursor: pointer;
   min-height: 34px;
+  transition:
+    border-color 0.16s ease,
+    background 0.16s ease,
+    transform 0.16s cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 0.16s ease;
 }
 .btn:hover:not(:disabled) {
   border-color: var(--text-faint);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 14px rgb(0 0 0 / 0.3);
+}
+.btn:active:not(:disabled) {
+  transform: translateY(0) scale(0.97);
+  box-shadow: none;
 }
 .btn:disabled {
   color: var(--text-faint);
@@ -666,6 +961,11 @@ table.data th.num {
   min-height: 200px;
 }
 .circuit-map img {
+  /* The intrinsic 500x500 now travels on the element, so the box is reserved
+     before the SVG arrives and the panel below it does not jump. `height:auto`
+     keeps the aspect ratio from those attributes rather than from the file. */
+  width: auto;
+  height: auto;
   max-width: 100%;
   max-height: 240px;
   /* Assets are dark-on-transparent; invert to read on the dark surface. */
@@ -771,7 +1071,9 @@ table.data th.num {
 
 .kpi-strip {
   display: grid;
-  grid-template-columns: repeat(6, 1fr);
+  /* Count set per instance by CellGrid via --kpi-cols, so the breakpoints
+     below can still override it. Home's own strip uses the 6-cell default. */
+  grid-template-columns: repeat(var(--kpi-cols, 6), minmax(0, 1fr));
 }
 .kpi {
   padding: var(--s4) 20px;
@@ -849,9 +1151,13 @@ table.data th.num {
   padding: 0 0 14px;
   border-bottom: 0;
 }
+/* An h2 that must not inherit heading margins or the browser's 1.5em size --
+   the panel header's density is part of the design. */
 .pane__title {
   font-size: 14px;
   font-weight: 600;
+  margin: 0;
+  line-height: inherit;
 }
 .pane__meta {
   font-size: 10px;
@@ -1038,15 +1344,21 @@ table.data th.num {
   border-radius: 999px;
   color: var(--text-dim);
 }
+/* The visible glyph stays 13px -- the chip's density is the design -- but the
+   hit area is padded out to a usable target and the padding pulled back off
+   with a matching negative margin, so nothing moves. Same trick the sort
+   buttons in the listings already use. */
 .chip__x {
   background: none;
   border: 0;
-  padding: 0;
+  padding: 11px 9px;
+  margin: -11px -9px -11px -5px;
   color: var(--text-faint);
   font-size: 13px;
   line-height: 1;
   cursor: pointer;
   font-family: inherit;
+  touch-action: manipulation;
 }
 .chip__x:hover {
   color: var(--accent-text);
@@ -1060,6 +1372,7 @@ table.data th.num {
 }
 .segmented__btn {
   padding: 5px 12px;
+  min-height: 34px;
   font-size: 12px;
   font-family: inherit;
   background: none;
@@ -1067,6 +1380,25 @@ table.data th.num {
   border-right: 1px solid var(--border);
   color: var(--text-dim);
   cursor: pointer;
+  touch-action: manipulation;
+}
+/* Coarse pointers get the full 44px; a mouse keeps the compact control.
+   Text inputs also go to 16px: below that, iOS Safari zooms the viewport on
+   focus and never zooms back, which strands the user mid-page. */
+@media (pointer: coarse) {
+  .segmented__btn,
+  .btn {
+    min-height: 44px;
+  }
+  .input,
+  .select,
+  .searchfield__input,
+  .palette input {
+    font-size: 16px;
+  }
+  .searchfield__box {
+    padding: 9px 10px;
+  }
 }
 .segmented__btn:last-child {
   border-right: 0;
@@ -1117,6 +1449,13 @@ table.data th.num {
   flex-wrap: wrap;
 }
 
+.entity-head__portrait {
+  width: 84px;
+  aspect-ratio: 3 / 4;
+  margin-bottom: 0;
+  flex-shrink: 0;
+}
+
 /* Ranked list used by "most successful drivers here". */
 .rank-list {
   list-style: none;
@@ -1145,6 +1484,23 @@ table.data th.num {
   color: var(--text-dim);
   white-space: nowrap;
 }
+.rank-list__note {
+  display: block;
+  font-size: var(--fs-micro);
+  color: var(--text-faint);
+}
+.rank-list__bar {
+  width: 64px;
+  height: 6px;
+  background: var(--elevated);
+  flex-shrink: 0;
+  align-self: center;
+}
+.rank-list__bar > span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
 
 /* Timeline bar: a driver's constructor spells across their career. */
 .timeline {
@@ -1164,40 +1520,6 @@ table.data th.num {
   min-width: 0;
 }
 
-/* Availability matrix (methodology): field x season. */
-.matrix {
-  display: grid;
-  gap: 2px;
-  overflow-x: auto;
-}
-.matrix__row {
-  display: grid;
-  grid-auto-flow: column;
-  grid-auto-columns: 18px;
-  gap: 2px;
-  align-items: center;
-}
-.matrix__label {
-  font-size: 11px;
-  color: var(--text-dim);
-  white-space: nowrap;
-  position: sticky;
-  left: 0;
-  background: var(--surface);
-  padding-right: var(--s2);
-}
-.matrix__dot {
-  height: 14px;
-  border-radius: 2px;
-}
-.matrix__dot--yes {
-  background: var(--success);
-}
-.matrix__dot--no {
-  background: #3a2a2e;
-  border: 1px solid #5a3038;
-}
-
 /* Filter row + rank column. */
 .filter-row {
   display: flex;
@@ -1215,11 +1537,13 @@ table.data th.num {
 .chip__clear {
   background: none;
   border: 0;
-  padding: 0 4px;
+  padding: 12px 8px;
+  margin: -12px -4px;
   font-size: 11px;
   font-family: inherit;
   color: var(--info);
   cursor: pointer;
+  touch-action: manipulation;
 }
 .rank {
   color: var(--text-faint);
@@ -1311,58 +1635,6 @@ table.data th.num {
   font-size: 13px;
 }
 
-/* Pipeline: connected steps, arrows between. */
-.pipeline {
-  display: flex;
-  align-items: stretch;
-  gap: var(--s2);
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  overflow-x: auto;
-}
-.pipeline__step {
-  display: flex;
-  align-items: center;
-  gap: var(--s2);
-  flex: 1;
-  min-width: 170px;
-}
-.pipeline__card {
-  flex: 1;
-  padding: var(--s3) var(--s4);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--bg);
-  height: 100%;
-}
-.pipeline__card--end {
-  border-color: var(--accent);
-}
-.pipeline__n {
-  font-size: 10px;
-  letter-spacing: 0.08em;
-  color: var(--info);
-  margin-bottom: 6px;
-}
-.pipeline__card--end .pipeline__n {
-  color: var(--accent-text);
-}
-.pipeline__title {
-  font-size: 14px;
-  font-weight: 600;
-  margin-bottom: 4px;
-}
-.pipeline__body {
-  font-size: 12px;
-  color: var(--text-dim);
-  line-height: 1.45;
-}
-.pipeline__arrow {
-  color: var(--text-faint);
-  flex-shrink: 0;
-}
-
 /* Library gallery (mockup sections 06 / 07). */
 .gallery {
   display: grid;
@@ -1399,6 +1671,73 @@ table.data th.num {
     rgba(170, 180, 194, 0.035) 12px
   );
 }
+/* Team logos.
+   The artwork is inconsistent by nature -- some marks are dark-on-white
+   (Brawn, Williams), some light-on-colour (Aston Martin, Red Bull), some
+   carry their own background. A neutral light plate is the only surface all
+   of them stay legible on, so the frame supplies one rather than dropping
+   each logo straight onto the near-black panel. */
+.gallery__media--logo {
+  background: #f5f7fa;
+  border: 1px solid var(--border);
+  border-style: solid;
+  padding: 8px;
+}
+.gallery__media--logo img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+/* Car photos are all 800x600, the same 4:3 the frame reserves, so `contain`
+   fits them edge to edge with nothing cropped and no letterboxing. */
+.gallery__media--car {
+  background: #f5f7fa;
+  border: 1px solid var(--border);
+  border-style: solid;
+  overflow: hidden;
+  padding: 0;
+}
+.gallery__media--car img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+/* Portraits crop rather than letterbox: the source images vary in framing,
+   and `cover` from the top keeps the face in frame at both card and
+   masthead size. `contain` left large white margins on the wider ones. */
+.gallery__media--portrait {
+  background: #f5f7fa;
+  border: 1px solid var(--border);
+  border-style: solid;
+  overflow: hidden;
+  padding: 0;
+}
+.gallery__media--portrait img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: 50% 15%;
+}
+
+/* Small mark beside a panel heading. */
+.pane__title-row {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
+  min-width: 0;
+}
+.pane__logo {
+  width: 34px;
+  height: 20px;
+  object-fit: contain;
+  background: #f5f7fa;
+  border-radius: 3px;
+  padding: 2px;
+  flex-shrink: 0;
+}
+
 .gallery__media span {
   font-size: 9px;
   letter-spacing: 0.04em;
@@ -1426,6 +1765,312 @@ table.data th.num {
   color: var(--text);
 }
 
+/* Row lists (the mockup's listing shape everywhere: § 03, § 06, § 07 …).
+   Fixed px tracks with one 1fr name column, set per instance via --cols. */
+/* No `width: max-content` here: it resolves every `1fr` track to its content
+   width, which defeats the flexing name column and makes wide listings
+   measure far past the pane. The grid fills the pane and only the tracks
+   themselves decide when it has to scroll. */
+.rows {
+  min-width: 100%;
+}
+.rows__head,
+.rows__row {
+  display: grid;
+  grid-template-columns: var(--cols);
+  gap: var(--s3);
+  align-items: center;
+}
+.rows__head {
+  padding: var(--s2) var(--s4);
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.rows__row {
+  padding: 9px var(--s4);
+  border-bottom: 1px solid var(--elevated);
+  font-size: var(--fs-sm);
+}
+.rows__row:last-child {
+  border-bottom: 0;
+}
+.rows__row:hover {
+  background: var(--elevated);
+}
+.rows .num {
+  text-align: right;
+  font-family: var(--mono);
+  font-feature-settings: "tnum" 1;
+}
+.rows__row > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Narrow screens: the tracks cannot fit, so the listing scrolls inside its
+   pane. Without this the rows stay pane-width while their cells extend past
+   it, and a hovered row's background stops halfway across. Scoped to the
+   breakpoint because on desktop it would force a scrollbar the grid does not
+   need. */
+@media (max-width: 720px) {
+  .rows {
+    min-width: max-content;
+  }
+}
+
+/* Metric definitions strip (mockup § 09). */
+.defs {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+}
+.defs__item {
+  padding: var(--s3) var(--s4);
+  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  min-width: 0;
+}
+.defs__name {
+  font-size: var(--fs-micro);
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+  margin-bottom: 4px;
+}
+.defs__body {
+  font-size: var(--fs-sm);
+  margin: 0 0 6px;
+}
+.defs__formula {
+  font-size: var(--fs-micro);
+  color: var(--text-faint);
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+/* Related-links strip that closes a detail page (mockup § 06). */
+.related {
+  display: flex;
+  align-items: center;
+  gap: var(--s4);
+  flex-wrap: wrap;
+  margin-top: var(--s5);
+  padding: var(--s3) var(--s4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  font-size: var(--fs-xs);
+}
+.related__label {
+  font-size: var(--fs-micro);
+  letter-spacing: 0.08em;
+  color: var(--text-faint);
+}
+.related a:hover {
+  color: var(--info);
+}
+.related__note {
+  margin-left: auto;
+  font-size: var(--fs-micro);
+  color: var(--text-faint);
+}
+
+/* Race row with its track outline (mockup § 06). */
+.race-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  min-width: 0;
+}
+.race-row__map {
+  width: 34px;
+  height: 24px;
+  object-fit: contain;
+  flex-shrink: 0;
+  opacity: 0.8;
+}
+.race-row__sub {
+  display: block;
+  font-size: var(--fs-micro);
+  color: var(--text-faint);
+}
+
+/* Standings rows (mockup § 02): grid rows with a team colour bar, not a table. */
+.standings__head,
+.standings__row {
+  display: grid;
+  grid-template-columns: 32px 20px 1fr 60px 70px 70px;
+  align-items: center;
+  padding: var(--s2) var(--s5);
+  gap: var(--s2);
+}
+.standings--team .standings__head,
+.standings--team .standings__row {
+  grid-template-columns: 32px 20px 1fr 90px 70px 70px;
+}
+.standings__head {
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  font-size: var(--fs-micro);
+  color: var(--text-dim);
+  letter-spacing: 0.06em;
+}
+.standings__head > span:nth-child(n + 4) {
+  text-align: right;
+}
+.standings__row {
+  border-bottom: 1px solid var(--elevated);
+}
+.standings__row:last-child {
+  border-bottom: 0;
+}
+.standings__row:hover {
+  background: var(--elevated);
+}
+.standings__rank {
+  font-size: var(--fs-sm);
+  color: var(--text-dim);
+}
+.standings__flag {
+  width: 3px;
+  height: 16px;
+  background: var(--border);
+}
+.standings__name {
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  min-width: 0;
+}
+.standings__sub {
+  display: block;
+  font-size: var(--fs-micro);
+  font-weight: 400;
+  color: var(--text-dim);
+}
+.standings__num {
+  font-size: var(--fs-sm);
+  text-align: right;
+}
+.standings__num--lead {
+  font-size: 14px;
+  font-weight: 600;
+}
+.standings__gap {
+  font-size: var(--fs-xs);
+  text-align: right;
+  color: var(--text-dim);
+}
+.standings__share {
+  display: block;
+  height: 6px;
+  background: var(--elevated);
+  margin-right: 6px;
+}
+.standings__share > span {
+  display: block;
+  height: 100%;
+}
+/* The mockup is desktop-first and sizes these tracks in fixed px. Below the
+   split's breakpoint they no longer fit, so the numerics tighten and the
+   padding drops to the page gutter rather than clipping the row. */
+@media (max-width: 720px) {
+  .standings__head,
+  .standings__row,
+  .standings--team .standings__head,
+  .standings--team .standings__row {
+    grid-template-columns: 24px 3px minmax(0, 1fr) 44px 44px 48px;
+    padding: var(--s2) var(--s3);
+    gap: var(--s2);
+  }
+  .standings__share {
+    display: none;
+  }
+  .standings--team .standings__head > span:nth-child(4),
+  .standings--team .standings__row > span:nth-child(4) {
+    display: none;
+  }
+  .standings--team .standings__head,
+  .standings--team .standings__row {
+    grid-template-columns: 24px 3px minmax(0, 1fr) 44px 48px;
+  }
+}
+
+/* Car library (mockup § 08): one card per constructor-season, grouped by team. */
+.car-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+}
+.car-card {
+  padding: var(--s4);
+  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  min-width: 0;
+}
+.car-card__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--s2);
+  margin-bottom: var(--s2);
+}
+.car-card__name {
+  font-size: 14px;
+  font-weight: 600;
+}
+.car-card__chassis {
+  font-size: 10px;
+  color: var(--text-faint);
+  letter-spacing: 0.06em;
+  margin-top: 2px;
+}
+.car-more {
+  padding: var(--s3) var(--s4);
+  border-top: 1px solid var(--border);
+}
+.car-card__drivers {
+  font-size: 10px;
+  color: var(--text-faint);
+  margin-top: 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Global search results (mockup § 13), grouped one row per hit. */
+.search-group {
+  display: grid;
+}
+.search-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s3);
+  padding: 10px var(--s4);
+  border-top: 1px solid var(--border);
+  min-width: 0;
+}
+.search-row:first-child {
+  border-top: 0;
+}
+.search-row:hover {
+  background: var(--elevated);
+}
+.search-row__label {
+  font-size: 14px;
+  font-weight: 500;
+  flex-shrink: 0;
+}
+.search-row__sub {
+  font-size: 11px;
+  color: var(--text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* ---------- Responsive ----------
    The rail is 56 icon-only pixels, so it survives every breakpoint intact --
    that is the point of a rail, and it is what the mockup's responsive section
@@ -1440,7 +2085,7 @@ table.data th.num {
     display: none;
   }
   .kpi-strip {
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
   .kpi:nth-child(3n) {
     border-right: 0;
@@ -1482,7 +2127,7 @@ table.data th.num {
     max-width: none;
   }
   .kpi-strip {
-    grid-template-columns: repeat(2, 1fr);
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
   .kpi:nth-child(3n) {
     border-right: 1px solid var(--border);

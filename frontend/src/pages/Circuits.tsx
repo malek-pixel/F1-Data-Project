@@ -1,14 +1,19 @@
 import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { DataTable } from "../components/DataTable";
+import { motion } from "motion/react";
+import { Stagger, staggerItem } from "../components/motion";
+import { SearchField } from "../components/SearchField";
 import { Async, EmptyState } from "../components/States";
 import { dec, num } from "../components/format";
-import { Badge, Cell, CellGrid, PageHeader, Panel, PaneHead, PendingCell, PendingValue, SectionTitle, Segmented } from "../components/ui";
+import { Badge, Cell, CellGrid, PageHeader, Panel, PendingCell, SectionTitle } from "../components/ui";
 import { useApi, useDebounced } from "../hooks/useApi";
 import { useCoverage, useDataset } from "../hooks/useDataset";
 import { qs } from "../services/api";
 import { MethodologyNote } from "../components/MethodologyNote";
 import type { Circuit, CircuitDetail as Detail, MetricDoc } from "../types";
+
+const MotionCard = motion.create(Link);
 
 interface Specialist {
   driver_id: number;
@@ -95,8 +100,44 @@ function TrackMap({ circuit }: { circuit: Pick<Circuit, "slug" | "name" | "has_m
   }
   return (
     <div className="circuit-map">
-      <img src={`/circuits/${circuit.slug}.svg`} alt={`Track layout of ${circuit.name}`} loading="lazy" />
+      <img src={`/circuits/${circuit.slug}.svg`} alt={`Track layout of ${circuit.name}`} loading="lazy" decoding="async" width={500} height={500} />
     </div>
+  );
+}
+
+/**
+ * Ranked list with a proportional bar (mockup § 05).
+ *
+ * The bar is scaled to the leader, so it reads as "share of the best result
+ * here" rather than an absolute quantity.
+ */
+function RankList<T extends { id: number; name: string; wins: number }>({
+  rows,
+  href,
+  note,
+}: {
+  rows: T[];
+  href: (row: T) => string;
+  note: (row: T) => string;
+}) {
+  if (rows.length === 0) return <p className="table-empty">No results recorded here.</p>;
+  const top = Math.max(...rows.map((row) => row.wins), 1);
+  return (
+    <ol className="rank-list">
+      {rows.map((row, i) => (
+        <li key={row.id}>
+          <span className="rank-list__n mono">{i + 1}</span>
+          <span style={{ minWidth: 0 }}>
+            <Link to={href(row)}>{row.name}</Link>
+            <span className="mono rank-list__note">{note(row)}</span>
+          </span>
+          <span className="rank-list__val mono">{num(row.wins)} wins</span>
+          <span className="rank-list__bar" aria-hidden="true">
+            <span style={{ width: `${(row.wins / top) * 100}%` }} />
+          </span>
+        </li>
+      ))}
+    </ol>
   );
 }
 
@@ -104,7 +145,6 @@ export function CircuitLibrary() {
   const info = useDataset();
   const coverage = useCoverage();
   const [search, setSearch] = useState("");
-  const [view, setView] = useState<"table" | "grid">("table");
   const debounced = useDebounced(search);
   const state = useApi<Circuit[]>(`/circuits${qs({ search: debounced })}`);
 
@@ -117,30 +157,15 @@ export function CircuitLibrary() {
       />
 
       <div className="controls">
-        <div className="field">
-          <label htmlFor="circuit-search">SEARCH</label>
-          <input
-            id="circuit-search"
-            className="input"
-            type="search"
-            placeholder="Circuit or country…"
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            style={{ minWidth: 260 }}
-          />
-        </div>
-        <div className="field">
-          <label htmlFor="circuit-view">VIEW</label>
-          <Segmented
-            label="Circuit view"
-            active={view}
-            onChange={setView}
-            options={[
-              { id: "table", label: "Table" },
-              { id: "grid", label: "Grid" },
-            ]}
-          />
-        </div>
+        <SearchField
+          id="circuit-search"
+          label="SEARCH"
+          className="searchfield--wide"
+          placeholder="Circuit or country…"
+          value={search}
+          loading={state.loading}
+          onChange={setSearch}
+        />
       </div>
 
       <Async
@@ -148,93 +173,40 @@ export function CircuitLibrary() {
         loadingRows={8}
         empty={{ title: "No circuits found", body: `Nothing matches “${debounced}”. Try a country name.` }}
       >
-        {(circuits) =>
-          view === "grid" ? (
-            <div className="grid" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))" }}>
-              {circuits.map((circuit) => (
-                <Link key={circuit.id} to={`/circuits/${circuit.id}`} className="card" style={{ padding: 16 }}>
-                  <TrackMap circuit={circuit} />
-                  <div style={{ marginTop: 12, fontWeight: 600, fontSize: 15 }}>{circuit.name}</div>
-                  <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 6 }}>
-                    <span className="mono" style={{ fontSize: 11, color: "var(--text-dim)" }}>
-                      {circuit.country.toUpperCase()} · {circuit.races} races
-                    </span>
-                    {!circuit.has_map && <Badge tone="warning">No map</Badge>}
-                  </div>
-                </Link>
-              ))}
-            </div>
-          ) : (
-            <Panel>
-              <PaneHead
-                title={`Circuits · ${circuits.length} rows`}
-                meta={`SCOPE ${coverage} · IDENTITY DERIVED FROM RACE NAME`}
-              />
-              <DataTable
-                caption="Circuits in the dataset"
-                rows={circuits}
-                rowKey={(row) => row.id}
-                emptyMessage={`No circuits match “${debounced}”.`}
-                columns={[
-                  {
-                    key: "rank",
-                    header: "#",
-                    numeric: true,
-                    render: (_r, i) => <span className="mono rank">{String(i + 1).padStart(2, "0")}</span>,
-                  },
-                  {
-                    key: "name",
-                    header: "Circuit",
-                    render: (r) => (
-                      <Link to={`/circuits/${r.id}`} style={{ fontWeight: 500 }}>
-                        {r.name}
-                      </Link>
-                    ),
-                  },
-                  {
-                    key: "ctry",
-                    header: "Ctry",
-                    render: (r) => <span className="mono">{r.country.toUpperCase()}</span>,
-                  },
-                  {
-                    key: "length",
-                    header: "Length",
-                    numeric: true,
-                    render: () => <PendingValue title="No circuit-length column in the source" />,
-                  },
-                  { key: "races", header: "Races", numeric: true, render: (r) => num(r.races) },
-                  {
-                    key: "most",
-                    header: "Most wins",
-                    render: (r) =>
-                      r.top_winner ? (
-                        <>
-                          {r.top_winner}{" "}
-                          <span className="mono" style={{ color: "var(--text-faint)", fontSize: 11 }}>
-                            {r.top_winner_wins} {r.top_winner_wins === 1 ? "win" : "wins"}
-                          </span>
-                        </>
-                      ) : (
-                        <PendingValue title="No recorded winner here" />
-                      ),
-                  },
-                  {
-                    key: "map",
-                    header: "Map",
-                    render: (r) =>
-                      r.has_map ? (
-                        <span className="mono" style={{ color: "var(--success)" }}>
-                          svg
-                        </span>
-                      ) : (
-                        <PendingValue title="No track-map SVG ships for this circuit" />
-                      ),
-                  },
-                ]}
-              />
-            </Panel>
-          )
-        }
+        {(circuits) => (
+          /* Track maps are the point of this library, so the card grid is the
+             only view -- a row of text could not show a layout. Everything the
+             explorer table listed (country, races, top winner) is on the card. */
+          <Stagger className="grid" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))" }}>
+            {circuits.map((circuit) => (
+              <MotionCard
+                key={circuit.id}
+                variants={staggerItem}
+                to={`/circuits/${circuit.id}`}
+                className="card"
+                style={{ padding: 16 }}
+              >
+                <TrackMap circuit={circuit} />
+                <div style={{ marginTop: 12, fontWeight: 600, fontSize: 15 }}>{circuit.name}</div>
+                <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 6 }}>
+                  <span className="mono" style={{ fontSize: 11, color: "var(--text-dim)" }}>
+                    {circuit.country.toUpperCase()} · {circuit.races} races
+                  </span>
+                  {!circuit.has_map && <Badge tone="warning">No map</Badge>}
+                </div>
+                <div className="mono" style={{ fontSize: 11, color: "var(--text-faint)", marginTop: 6 }}>
+                  {circuit.top_winner ? (
+                    <>
+                      MOST WINS · {circuit.top_winner} ({circuit.top_winner_wins})
+                    </>
+                  ) : (
+                    "MOST WINS · no recorded winner"
+                  )}
+                </div>
+              </MotionCard>
+            ))}
+          </Stagger>
+        )}
       </Async>
     </>
   );
@@ -296,39 +268,25 @@ export function CircuitDetail() {
             </CellGrid>
           </Panel>
 
+          {/* Mockup § 05 ranks these as a list with a proportional bar, not a
+              table: the comparison being made is one number against the
+              leader, and a bar reads faster than a column of digits. */}
           <SectionTitle>Most successful here</SectionTitle>
           <div className="grid grid--2">
             <div className="card">
               <div className="card__label mono">TOP DRIVERS</div>
-              <DataTable
-                caption={`Most successful drivers at ${circuit.name}`}
+              <RankList
                 rows={circuit.top_drivers}
-                rowKey={(row) => row.id}
-                columns={[
-                  { key: "name", header: "Driver", render: (r) => <Link to={`/drivers/${r.id}`}>{r.name}</Link> },
-                  { key: "wins", header: "Wins", numeric: true, render: (r) => num(r.wins) },
-                  { key: "podiums", header: "Podiums", numeric: true, render: (r) => num(r.podiums) },
-                  { key: "entries", header: "Entries", numeric: true, render: (r) => num(r.entries) },
-                  { key: "avg", header: "Avg pos", numeric: true, render: (r) => dec(r.avg_classified_position) },
-                ]}
+                href={(row) => `/drivers/${row.id}`}
+                note={(row) => `${num(row.podiums)} pod · avg P${dec(row.avg_classified_position)}`}
               />
             </div>
             <div className="card">
               <div className="card__label mono">TOP CONSTRUCTORS</div>
-              <DataTable
-                caption={`Most successful constructors at ${circuit.name}`}
+              <RankList
                 rows={circuit.top_constructors}
-                rowKey={(row) => row.id}
-                columns={[
-                  {
-                    key: "name",
-                    header: "Constructor",
-                    render: (r) => <Link to={`/constructors/${r.id}`}>{r.name}</Link>,
-                  },
-                  { key: "wins", header: "Wins", numeric: true, render: (r) => num(r.wins) },
-                  { key: "podiums", header: "Podiums", numeric: true, render: (r) => num(r.podiums) },
-                  { key: "entries", header: "Entries", numeric: true, render: (r) => num(r.entries) },
-                ]}
+                href={(row) => `/constructors/${row.id}`}
+                note={(row) => `${num(row.podiums)} pod · ${num(row.entries)} entries`}
               />
             </div>
           </div>

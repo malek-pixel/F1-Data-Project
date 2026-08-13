@@ -48,6 +48,10 @@ import urllib.parse
 import urllib.request
 from typing import Any
 
+# Imported for its side effect: populates os.environ from .env before the
+# constants below are read. These are module-level, so load order matters.
+from . import env as _env  # noqa: F401
+
 SUPABASE_URL = os.getenv("SUPABASE_URL", "").rstrip("/")
 SUPABASE_KEY = os.getenv("SUPABASE_ANON_KEY", "")
 

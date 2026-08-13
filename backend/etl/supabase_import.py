@@ -37,15 +37,22 @@ from collections import defaultdict
 from datetime import date
 from pathlib import Path
 
+# Populates os.environ from .env before SUPABASE_DB_URL is read below.
+from backend.app import env as _env  # noqa: F401
+
 try:
     import psycopg
-    from psycopg.rows import dict_row
 except ImportError:  # pragma: no cover - dependency guidance, not logic
     sys.exit("psycopg is required: pip install 'psycopg[binary]'")
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 RAW_CSV = REPO_ROOT / "results.csv"
 CIRCUIT_MAP_CSV = Path(__file__).with_name("circuit_map.csv")
+# Second source: finishing status, points, grid, laps. Built by
+# `python -m backend.etl.build_enrichment`, joined on (season, round, position).
+ENRICHMENT_CSV = REPO_ROOT / "data" / "jolpica_results.csv"
+# Sprint races, 2021 onward. Separate event, separate table.
+SPRINT_CSV = REPO_ROOT / "data" / "jolpica_sprints.csv"
 CIRCUIT_ASSET_DIR = REPO_ROOT / "frontend" / "public" / "circuits"
 
 DATASET_KEY = "ergast_results"
@@ -328,6 +335,164 @@ def promote(conn, report: Report, rules: list[dict], dataset_id: int) -> None:
             report.counts[f"{table} in database"] = cur.fetchone()[0]
 
 
+def promote_enrichment(conn, report: Report) -> None:
+    """Attach finishing status, points, grid and laps to existing result rows.
+
+    A second source (`data/jolpica_results.csv`) joined on
+    (season, round, position). That key was verified to align across all 10,550
+    rows -- same driver, same constructor -- before the columns were added.
+
+    This UPDATEs existing rows and inserts nothing: the enrichment must never
+    be able to invent a result that `results.csv` does not contain. If the join
+    misses, the row keeps NULLs and the coverage check below reports it.
+    """
+    if not ENRICHMENT_CSV.exists():
+        report.check("enrichment source", "warn", "warning", 0,
+                     f"{ENRICHMENT_CSV.name} not found -- run "
+                     "python -m backend.etl.build_enrichment")
+        return
+
+    with ENRICHMENT_CSV.open(newline="", encoding="utf-8") as handle:
+        rows = list(csv.DictReader(handle))
+    report.counts["enrichment source rows"] = len(rows)
+
+    payload = [
+        (
+            row["position_text"], row["classification"], row["status"],
+            row["points"], row["grid"], row["laps"],
+            int(row["season"]), int(row["round"]), int(row["position"]),
+        )
+        for row in rows
+    ]
+
+    with conn.cursor() as cur:
+        cur.executemany(
+            """
+            UPDATE results r
+               SET position_text  = %s,
+                   classification = %s,
+                   status         = %s,
+                   points         = %s::numeric,
+                   grid           = %s::smallint,
+                   laps           = %s::smallint,
+                   updated_at     = now()
+              FROM races ra JOIN seasons s ON s.id = ra.season_id
+             WHERE ra.id = r.race_id
+               AND s.year = %s AND ra.round = %s AND r.position = %s
+            """,
+            payload,
+        )
+
+        cur.execute("SELECT count(*) FROM results WHERE classification IS NULL")
+        unenriched = cur.fetchone()[0]
+        report.counts["results enriched"] = (
+            report.counts.get("results in database", 0) - unenriched
+        )
+        report.check(
+            "enrichment coverage",
+            "pass" if unenriched == 0 else "fail",
+            "info" if unenriched == 0 else "fatal",
+            unenriched,
+            "result rows with no finishing status -- the join key missed",
+        )
+
+        # The enrichment must not have altered classification order. If these
+        # disagree, the join matched the wrong rows.
+        cur.execute(
+            """SELECT count(*) FROM results
+               WHERE classification = 'classified' AND position_text <> position::text"""
+        )
+        drifted = cur.fetchone()[0]
+        report.check(
+            "enrichment agrees with position", "pass" if drifted == 0 else "fail",
+            "info" if drifted == 0 else "fatal", drifted,
+            "classified rows whose position_text disagrees with position",
+        )
+
+        # Winners must be classified, score points, and complete laps. A join
+        # that silently shifted by one row would break this immediately.
+        cur.execute(
+            """SELECT count(*) FROM results
+               WHERE position = 1
+                 AND (classification <> 'classified' OR points <= 0 OR laps <= 0)"""
+        )
+        bad_winners = cur.fetchone()[0]
+        report.check(
+            "winners are classified and scored", "pass" if bad_winners == 0 else "fail",
+            "info" if bad_winners == 0 else "fatal", bad_winners,
+            "race winners with a non-classified status, no points or no laps",
+        )
+
+
+def promote_sprints(conn, report: Report, dataset_id: int) -> None:
+    """Load sprint results into their own table.
+
+    Resolved by driver and constructor NAME against the dimensions already
+    loaded from results.csv. A sprint entrant who never started a Grand Prix
+    would not exist as a driver row -- so the count check below fails the run
+    rather than silently dropping them. (None exist in 2021-2025; the check is
+    there so a future season cannot regress silently.)
+    """
+    if not SPRINT_CSV.exists():
+        report.check("sprint source", "warn", "warning", 0,
+                     f"{SPRINT_CSV.name} not found -- sprints not loaded")
+        return
+
+    with SPRINT_CSV.open(newline="", encoding="utf-8") as handle:
+        rows = list(csv.DictReader(handle))
+    report.counts["sprint source rows"] = len(rows)
+
+    # psycopg3 accepts only positional %s, so the tuple order below must match
+    # the order the placeholders appear in the SQL, not the column order.
+    payload = [
+        (
+            int(row["position"]), row["position_text"], row["classification"],
+            row["status"], row["points"], row["grid"], row["laps"], dataset_id,
+            int(row["season"]), row["driver"].strip(), row["constructor"].strip(),
+            int(row["round"]),
+        )
+        for row in rows
+    ]
+
+    with conn.cursor() as cur:
+        cur.executemany(
+            """
+            INSERT INTO sprint_results
+                (race_id, driver_id, constructor_id, position, position_text,
+                 classification, status, points, grid, laps, dataset_id)
+            SELECT ra.id, d.id, co.id, %s, %s, %s, %s,
+                   %s::numeric, %s::smallint, %s::smallint, %s
+            FROM races ra
+            JOIN seasons s       ON s.id = ra.season_id AND s.year = %s
+            JOIN drivers d       ON d.display_name = %s
+            JOIN constructors co ON co.constructor_name = %s
+            WHERE ra.round = %s
+            ON CONFLICT (race_id, driver_id) DO UPDATE
+              SET constructor_id = excluded.constructor_id,
+                  position       = excluded.position,
+                  position_text  = excluded.position_text,
+                  classification = excluded.classification,
+                  status         = excluded.status,
+                  points         = excluded.points,
+                  grid           = excluded.grid,
+                  laps           = excluded.laps,
+                  updated_at     = now()
+            """,
+            payload,
+        )
+
+        cur.execute("SELECT count(*) FROM sprint_results")
+        loaded = cur.fetchone()[0]
+        report.counts["sprint_results in database"] = loaded
+        report.check(
+            "every sprint row loaded",
+            "pass" if loaded == len(rows) else "fail",
+            "info" if loaded == len(rows) else "fatal",
+            len(rows) - loaded,
+            "sprint rows whose driver, constructor or race did not resolve",
+        )
+
+
 def reconcile(conn, report: Report) -> None:
     """Prove the database agrees with the source file.
 
@@ -421,7 +586,13 @@ def main() -> int:
     rules = load_circuit_map()
     report = Report()
 
-    with psycopg.connect(dsn, row_factory=dict_row) as conn:
+    # Tuple rows, deliberately. Every read in this module is positional
+    # (`fetchone()[0]`, `for a, b, c in cur.fetchall()`), and a dict_row cursor
+    # silently turns those into reads of the *column names* -- unpacking a dict
+    # yields its keys, so `int(season)` received the literal string 'season'.
+    # That failed loudly here, but a positional read of a one-column dict would
+    # have failed silently. The two places that want a field by name index [0].
+    with psycopg.connect(dsn) as conn:
         # One transaction: a failed import leaves the database untouched
         # rather than half-populated.
         with conn.transaction():
@@ -432,7 +603,7 @@ def main() -> int:
                                'Local results.csv: season, round, race_name, date, position, driver, constructor')
                        ON CONFLICT (source_key) DO UPDATE SET name = excluded.name
                        RETURNING id""")
-                source_id = cur.fetchone()["id"]
+                source_id = cur.fetchone()[0]
 
                 cur.execute(
                     """INSERT INTO datasets
@@ -443,7 +614,7 @@ def main() -> int:
                        RETURNING id""",
                     (source_id, DATASET_KEY, DATASET_VERSION, checksum(RAW_CSV)),
                 )
-                dataset_id = cur.fetchone()["id"]
+                dataset_id = cur.fetchone()[0]
 
             stage(conn, report, rules)
 
@@ -458,6 +629,8 @@ def main() -> int:
                 raise SystemExit(0)
 
             promote(conn, report, rules, dataset_id)
+            promote_enrichment(conn, report)
+            promote_sprints(conn, report, dataset_id)
             reconcile(conn, report)
             persist_report(conn, report)
 

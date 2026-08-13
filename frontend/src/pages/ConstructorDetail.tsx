@@ -5,6 +5,7 @@ import { DriverContributionChart } from "../charts/ContributionChart";
 import { DataTable } from "../components/DataTable";
 import { ConsistencySection } from "../components/Consistency";
 import { Async, Unavailable } from "../components/States";
+import { teamLogo } from "../components/teamLogo";
 import { dec, num, pct, seasonSpan } from "../components/format";
 import { Badge, Cell, CellGrid, Panel, PendingCell, SectionTitle, Tabs } from "../components/ui";
 import { useApi } from "../hooks/useApi";
@@ -45,6 +46,20 @@ export function ConstructorDetail() {
                 <Link className="btn" to={`/compare?kind=constructors&left=${team.id}`}>
                   Compare
                 </Link>
+                {/* Mockup § 07 hangs a car gallery off the team page. */}
+                <Link className="btn" to={`/cars?team=${encodeURIComponent(team.name)}`}>
+                  Cars
+                </Link>
+                {teamLogo(team.name) ? (
+                  <div className="entity-head__portrait gallery__media gallery__media--logo">
+                    <img src={teamLogo(team.name)!} alt="" decoding="async" width={320} height={320} />
+                  </div>
+                ) : (
+                  <div className="entity-head__portrait gallery__media mono">
+                    LIVERY
+                    <span>to be added</span>
+                  </div>
+                )}
               </div>
             </div>
 

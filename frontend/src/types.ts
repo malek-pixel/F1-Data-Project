@@ -194,7 +194,7 @@ export interface DatasetSummary {
 }
 
 export interface SearchHit {
-  kind: "driver" | "constructor" | "circuit" | "season";
+  kind: "driver" | "constructor" | "circuit" | "race" | "season";
   id: number;
   label: string;
   sublabel: string;
@@ -300,6 +300,35 @@ export interface SeasonRow {
   constructor_winners: number;
   top_driver_win_share: number;
   top_constructor_win_share: number;
+}
+
+/** One constructor-season: the car a team ran that year (see /cars). */
+export interface CarSeason {
+  season: number;
+  races: number;
+  entries: number;
+  wins: number;
+  podiums: number;
+  best_finish: number;
+  avg_classified_position: number;
+  drivers: string[];
+  era: "current" | "recent" | "retired";
+}
+
+export interface CarTeam {
+  constructor_id: number;
+  constructor_name: string;
+  seasons: number;
+  wins: number;
+  first_season: number;
+  last_season: number;
+  cars: CarSeason[];
+}
+
+export interface CarLibraryPayload {
+  teams: CarTeam[];
+  unit: string;
+  chassis_available: boolean;
 }
 
 export interface Era {

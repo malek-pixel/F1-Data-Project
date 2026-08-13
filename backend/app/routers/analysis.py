@@ -37,8 +37,9 @@ def compare_entities(
     result["left_name"] = conn.execute(f"SELECT name FROM {table} WHERE id = ?", [left]).fetchone()["name"]
     result["right_name"] = conn.execute(f"SELECT name FROM {table} WHERE id = ?", [right]).fetchone()["name"]
     result["methodology"] = (
-        "Career totals cover 2000-2025 only. Entry counts, era and machinery differ between entities; "
-        "the shared-seasons block is the like-for-like view. Rates use entries as the denominator."
+        f"Career totals cover {analytics.coverage_span(conn)} only. Entry counts, era and machinery "
+        "differ between entities; the shared-seasons block is the like-for-like view. "
+        "Rates use entries as the denominator."
     )
     return result
 
@@ -46,7 +47,10 @@ def compare_entities(
 @router.get("/records", tags=["insights"])
 def get_records(conn: sqlite3.Connection = Depends(get_db)):
     """Dataset records. Each carries its own methodology string."""
-    return {"scope": "2000-2025 race classifications", "records": analytics.records(conn)}
+    return {
+        "scope": f"{analytics.coverage_span(conn)} race classifications",
+        "records": analytics.records(conn),
+    }
 
 
 @router.get("/insights", tags=["insights"])
@@ -60,6 +64,16 @@ def get_insights(conn: sqlite3.Connection = Depends(get_db), limit: int = Query(
 def get_dataset_summary(conn: sqlite3.Connection = Depends(get_db)):
     """Schema shape, coverage and known issues. No server internals."""
     return analytics.dataset_summary(conn)
+
+
+@router.get("/cars", tags=["cars"])
+def get_car_library(conn: sqlite3.Connection = Depends(get_db)):
+    """Constructor-seasons, grouped by constructor. See analytics.car_library."""
+    return {
+        "teams": analytics.car_library(conn),
+        "unit": "constructor-season",
+        "chassis_available": False,
+    }
 
 
 @router.get("/search", tags=["search"])

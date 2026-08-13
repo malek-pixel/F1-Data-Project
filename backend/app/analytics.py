@@ -40,6 +40,7 @@ as an explicit "unavailable" state; they are never estimated or inferred.
 from __future__ import annotations
 
 import logging
+import re
 import sqlite3
 
 # Minimum entries before a rate or average is treated as comparable. Below
@@ -57,7 +58,22 @@ _STATS_SELECT = """
     SUM(CASE WHEN r.position <= 5 THEN 1 ELSE 0 END) AS top5,
     SUM(CASE WHEN r.position <= 10 THEN 1 ELSE 0 END) AS top10,
     AVG(CAST(r.position AS REAL))                    AS avg_position,
-    MIN(r.position)                                  AS best_position
+    MIN(r.position)                                  AS best_position,
+    -- Enrichment-derived. COUNT(col) ignores NULLs, so `enriched` is the true
+    -- denominator for everything below it -- never `entries`, which would
+    -- silently understate a rate if any row lacked a status.
+    COUNT(r.classification)                          AS enriched,
+    SUM(CASE WHEN r.classification = 'classified' THEN 1 ELSE 0 END) AS finishes,
+    SUM(CASE WHEN r.classification IS NOT NULL
+              AND r.classification <> 'classified' THEN 1 ELSE 0 END) AS dnfs,
+    SUM(r.points)                                    AS points,
+    -- grid = 0 is a pit-lane start, a real value; but it is not a grid slot,
+    -- so it is excluded from the average rather than dragging it toward zero.
+    AVG(CASE WHEN r.grid > 0 THEN CAST(r.grid AS REAL) END) AS avg_grid,
+    -- Positions gained, classified finishes only: a retirement has no
+    -- meaningful finishing position to subtract from.
+    AVG(CASE WHEN r.grid > 0 AND r.classification = 'classified'
+             THEN CAST(r.grid - r.position AS REAL) END) AS avg_positions_gained
 """
 
 
@@ -82,7 +98,18 @@ def _stats(row: sqlite3.Row | None) -> dict:
             "avg_classified_position": None,
             "best_classified_position": None,
             "rates_reliable": False,
+            "finishes": None,
+            "dnfs": None,
+            "dnf_rate": None,
+            "points": None,
+            "avg_grid": None,
+            "avg_positions_gained": None,
         }
+
+    # Enrichment may be absent (a build without data/jolpica_results.csv), and
+    # absent must read as None, never 0 -- "we don't know how many retirements"
+    # is a different statement from "there were no retirements".
+    enriched = row["enriched"] or 0
     return {
         "entries": entries,
         "wins": row["wins"],
@@ -96,6 +123,17 @@ def _stats(row: sqlite3.Row | None) -> dict:
         "avg_classified_position": round(row["avg_position"], 3),
         "best_classified_position": row["best_position"],
         "rates_reliable": entries >= MIN_ENTRIES_FOR_RATES,
+        "finishes": row["finishes"] if enriched else None,
+        "dnfs": row["dnfs"] if enriched else None,
+        # Denominator is `enriched`, not `entries`: a partially enriched build
+        # must not report a rate over rows it knows nothing about.
+        "dnf_rate": (row["dnfs"] / enriched) if enriched else None,
+        "points": round(row["points"], 2) if row["points"] is not None else None,
+        "avg_grid": round(row["avg_grid"], 3) if row["avg_grid"] is not None else None,
+        "avg_positions_gained": (
+            round(row["avg_positions_gained"], 3)
+            if row["avg_positions_gained"] is not None else None
+        ),
     }
 
 
@@ -106,6 +144,17 @@ def like_pattern(text: str) -> str:
     """
     escaped = text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
     return f"%{escaped}%"
+
+
+def coverage_span(conn: sqlite3.Connection) -> str:
+    """The dataset's season range, e.g. "2000-2025", read from the data.
+
+    Never written as a literal. A hardcoded span is correct only until the next
+    ingestion, and a methodology string that quietly describes the wrong window
+    is worse than one that carries no window at all.
+    """
+    row = conn.execute("SELECT MIN(season) AS lo, MAX(season) AS hi FROM races").fetchone()
+    return f"{row['lo']}-{row['hi']}"
 
 
 def _season_filter(season_from: int | None, season_to: int | None) -> tuple[str, list]:
@@ -265,6 +314,27 @@ _LEADERBOARD_SORTS = {
 }
 
 
+# Constructors kept out of browsable lists at the owner's request.
+#
+# This hides, it does not delete. Their rows and all 368 of their race results
+# stay in the database and in every aggregate, so season standings, driver
+# entry counts, records and circuit stats are unchanged -- and a race in which
+# they competed still names them in its classification. They are simply not
+# offered as entities to browse, search or compare.
+#
+# Filtering here rather than in the client keeps pagination totals honest: a
+# page would otherwise report 38 and render 35.
+HIDDEN_CONSTRUCTORS = ("RB F1 Team", "Benetton", "BAR")
+
+
+def _hidden_clause(entity: str) -> tuple[str, list]:
+    """SQL fragment excluding hidden constructors from a browsable listing."""
+    if entity != "constructor":
+        return "", []
+    placeholders = ", ".join("?" for _ in HIDDEN_CONSTRUCTORS)
+    return f" AND e.name NOT IN ({placeholders})", list(HIDDEN_CONSTRUCTORS)
+
+
 def leaderboard(
     conn: sqlite3.Connection,
     entity: str,
@@ -278,6 +348,7 @@ def leaderboard(
     limit: int = 50,
     offset: int = 0,
     count_total: bool = True,
+    exclude_hidden: bool = False,
 ) -> dict:
     """Paginated, server-side-filtered ranking of drivers or constructors.
 
@@ -305,6 +376,14 @@ def leaderboard(
     if search:
         where += " AND e.name LIKE ? ESCAPE '\\'"
         params.append(like_pattern(search))
+
+    # Only the browsable library asks for this. Season standings, records and
+    # every other aggregate call this function without it, so hiding a team
+    # from the index never removes it from a season it actually raced in.
+    if exclude_hidden:
+        hidden_sql, hidden_params = _hidden_clause(entity)
+        where += hidden_sql
+        params += hidden_params
 
     base = f"""
         SELECT e.id, e.name, {_STATS_SELECT}
@@ -522,10 +601,12 @@ def records(conn: sqlite3.Connection) -> list[dict]:
         """
     ).fetchone()
 
+    span = coverage_span(conn)
+
     entries = [
-        ("Most wins (driver)", top("driver", "wins"), "wins", "Race wins, 2000-2025."),
-        ("Most podiums (driver)", top("driver", "podiums"), "podiums", "Classified P1-P3, 2000-2025."),
-        ("Most entries (driver)", top("driver", "entries"), "entries", "Race classifications, 2000-2025."),
+        ("Most wins (driver)", top("driver", "wins"), "wins", f"Race wins, {span}."),
+        ("Most podiums (driver)", top("driver", "podiums"), "podiums", f"Classified P1-P3, {span}."),
+        ("Most entries (driver)", top("driver", "entries"), "entries", f"Race classifications, {span}."),
         (
             "Highest win rate (driver)",
             top("driver", "win_rate", MIN_ENTRIES_FOR_RATES),
@@ -538,8 +619,8 @@ def records(conn: sqlite3.Connection) -> list[dict]:
             "avg_classified_position",
             f"Mean classification incl. retirements, minimum {MIN_ENTRIES_FOR_RATES} entries.",
         ),
-        ("Most wins (constructor)", top("constructor", "wins"), "wins", "Race wins, 2000-2025."),
-        ("Most podiums (constructor)", top("constructor", "podiums"), "podiums", "Classified P1-P3, 2000-2025."),
+        ("Most wins (constructor)", top("constructor", "wins"), "wins", f"Race wins, {span}."),
+        ("Most podiums (constructor)", top("constructor", "podiums"), "podiums", f"Classified P1-P3, {span}."),
     ]
 
     out = [
@@ -564,7 +645,7 @@ def records(conn: sqlite3.Connection) -> list[dict]:
                 "entity": circuit_king["name"],
                 "value": circuit_king["wins"],
                 "context": circuit_king["circuit"],
-                "methodology": "Wins at a single circuit across 2000-2025. Circuits appear in different numbers of seasons.",
+                "methodology": f"Wins at a single circuit across {span}. Circuits appear in different numbers of seasons.",
             }
         )
     return out
@@ -599,6 +680,9 @@ def insights(conn: sqlite3.Connection, limit: int = 6) -> list[dict]:
 def _insight_period_leaders(conn: sqlite3.Connection) -> list[dict]:
     """Leading race-winner of each decade."""
     out: list[dict] = []
+    # The final decade is partial. Clamp to the last season the data actually
+    # holds rather than to a literal, so the label stays true after ingestion.
+    last_season = conn.execute("SELECT MAX(season) FROM races").fetchone()[0]
     decades = conn.execute(
         """
         SELECT (ra.season / 10) * 10 AS decade, d.name, COUNT(*) AS wins
@@ -619,7 +703,7 @@ def _insight_period_leaders(conn: sqlite3.Connection) -> list[dict]:
             {
                 "kind": "period_leader",
                 "headline": f"{row['name']} led the {row['decade']}s on race wins",
-                "detail": f"{row['wins']} wins in seasons {row['decade']}-{min(row['decade'] + 9, 2025)}.",
+                "detail": f"{row['wins']} wins in seasons {row['decade']}-{min(row['decade'] + 9, last_season)}.",
                 "basis": "COUNT(position = 1) grouped by decade and driver.",
             }
         )
@@ -883,8 +967,80 @@ def dataset_summary(conn: sqlite3.Connection) -> dict:
     }
 
 
+def car_library(conn: sqlite3.Connection) -> list[dict]:
+    """Every constructor's season-by-season entries, grouped by constructor.
+
+    The mockup's Car Library (§ 08) is a gallery of chassis -- MP4/4, MCL39.
+    The source has no chassis column and never will without a second dataset,
+    so the unit here is the constructor-season: the machine a team ran in a
+    given year, identified by team and year rather than by a chassis code the
+    dataset does not contain. Everything shown is measured; the chassis
+    designation stays explicitly absent rather than being filled in from
+    memory and passed off as data.
+    """
+    latest = conn.execute("SELECT MAX(season) AS s FROM races").fetchone()["s"]
+    rows = conn.execute(
+        """
+        SELECT c.id AS constructor_id, c.name AS constructor_name, r2.season,
+               COUNT(*) AS entries,
+               COUNT(DISTINCT r2.race_id) AS races,
+               SUM(CASE WHEN r2.position = 1 THEN 1 ELSE 0 END) AS wins,
+               SUM(CASE WHEN r2.position <= 3 THEN 1 ELSE 0 END) AS podiums,
+               MIN(r2.position) AS best_finish,
+               AVG(r2.position) AS avg_classified_position,
+               GROUP_CONCAT(DISTINCT d.name) AS drivers
+        FROM constructors c
+        JOIN (SELECT r.*, ra.season FROM results r JOIN races ra ON ra.id = r.race_id) r2
+          ON r2.constructor_id = c.id
+        JOIN drivers d ON d.id = r2.driver_id
+        WHERE c.name NOT IN (?, ?, ?)
+        GROUP BY c.id, r2.season
+        ORDER BY c.name, r2.season DESC
+        """,
+        list(HIDDEN_CONSTRUCTORS),
+    ).fetchall()
+
+    teams: dict[int, dict] = {}
+    for row in rows:
+        team = teams.setdefault(
+            row["constructor_id"],
+            {
+                "constructor_id": row["constructor_id"],
+                "constructor_name": row["constructor_name"],
+                "seasons": 0,
+                "wins": 0,
+                "first_season": row["season"],
+                "last_season": row["season"],
+                "cars": [],
+            },
+        )
+        team["seasons"] += 1
+        team["wins"] += row["wins"]
+        team["first_season"] = min(team["first_season"], row["season"])
+        team["last_season"] = max(team["last_season"], row["season"])
+        team["cars"].append(
+            {
+                "season": row["season"],
+                "races": row["races"],
+                "entries": row["entries"],
+                "wins": row["wins"],
+                "podiums": row["podiums"],
+                "best_finish": row["best_finish"],
+                "avg_classified_position": round(row["avg_classified_position"], 2),
+                # SQLite's GROUP_CONCAT with DISTINCT cannot take a separator,
+                # so it is always the default comma.
+                "drivers": sorted(row["drivers"].split(",")),
+                # Era is derived from the season, not asserted about the team:
+                # "current" means it raced in the dataset's final season.
+                "era": "current" if row["season"] == latest else "recent" if row["season"] >= latest - 4 else "retired",
+            }
+        )
+
+    return sorted(teams.values(), key=lambda t: (-t["wins"], t["constructor_name"]))
+
+
 def search(conn: sqlite3.Connection, query: str, limit: int = 8) -> list[dict]:
-    """Global search across drivers, constructors, circuits and seasons.
+    """Global search across drivers, constructors, circuits, races and seasons.
 
     Ranked by match position (prefix matches first), then by wins so the more
     prominent entity of two equal-quality matches surfaces first.
@@ -900,18 +1056,19 @@ def search(conn: sqlite3.Connection, query: str, limit: int = 8) -> list[dict]:
         ("constructor", "constructors", "SUM(CASE WHEN r.position = 1 THEN 1 ELSE 0 END)"),
     ]:
         join = "r.driver_id" if kind == "driver" else "r.constructor_id"
+        hidden_sql, hidden_params = _hidden_clause(kind)
         out += [
             {"kind": kind, "id": row["id"], "label": row["name"], "sublabel": f"{row['wins']} wins"}
             for row in conn.execute(
                 f"""
                 SELECT e.id, e.name, {extra} AS wins
                 FROM {table} e LEFT JOIN results r ON {join} = e.id
-                WHERE e.name LIKE ? ESCAPE '\\'
+                WHERE e.name LIKE ? ESCAPE '\\'{hidden_sql}
                 GROUP BY e.id
                 ORDER BY INSTR(LOWER(e.name), LOWER(?)), wins DESC
                 LIMIT ?
                 """,
-                [pattern, text, limit],
+                [pattern, *hidden_params, text, limit],
             )
         ]
 
@@ -924,14 +1081,51 @@ def search(conn: sqlite3.Connection, query: str, limit: int = 8) -> list[dict]:
         )
     ]
 
-    if text.isdigit():
+    # A query like "2004 monza" carries two things: a season filter and a name.
+    # Split them so the race lookup can use both, instead of failing to match
+    # either half against a single column.
+    year = re.search(r"\b(?:19|20)\d{2}\b", text)
+    rest = (text[: year.start()] + text[year.end() :]).strip() if year else text
+    season = int(year.group(0)) if year else None
+
+    if rest or season is not None:
+        where, args = [], []
+        if rest:
+            # Race identity in this dataset is the Grand Prix name; the circuit
+            # is how most people actually refer to a race ("Monza", "Spa").
+            where.append("(rc.name LIKE ? ESCAPE '\\' OR c.name LIKE ? ESCAPE '\\')")
+            args += [like_pattern(rest), like_pattern(rest)]
+        if season is not None:
+            where.append("rc.season = ?")
+            args.append(season)
+        out += [
+            {
+                "kind": "race",
+                "id": row["id"],
+                "label": f"{row['season']} {row['name']}",
+                "sublabel": f"{row['circuit']} · round {row['round']} · {row['date']}",
+            }
+            for row in conn.execute(
+                f"""
+                SELECT rc.id, rc.season, rc.round, rc.name, rc.date, c.name AS circuit
+                FROM races rc JOIN circuits c ON c.id = rc.circuit_id
+                WHERE {' AND '.join(where)}
+                ORDER BY rc.season DESC, rc.round
+                LIMIT ?
+                """,
+                [*args, limit],
+            )
+        ]
+
+    if text.isdigit() or season is not None:
+        prefix = text if text.isdigit() else str(season)
         out += [
             {"kind": "season", "id": row["season"], "label": str(row["season"]), "sublabel": f"{row['n']} races"}
             for row in conn.execute(
                 "SELECT season, COUNT(*) AS n FROM races WHERE CAST(season AS TEXT) LIKE ? "
                 "GROUP BY season ORDER BY season LIMIT ?",
-                [f"{text}%", limit],
+                [f"{prefix}%", limit],
             )
         ]
 
-    return out[: limit * 2]
+    return out[: limit * 3]

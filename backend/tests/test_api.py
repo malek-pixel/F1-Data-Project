@@ -4,6 +4,7 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
+from backend.app import analytics
 from backend.app.db import DB_PATH
 from backend.app.main import app
 
@@ -140,9 +141,55 @@ def test_dataset_summary_declares_unavailable_fields(client):
     assert "f1.db" not in str(body)
 
 
+def test_hidden_constructors_are_withheld_from_browsable_lists(client):
+    """Hidden means "not offered to browse", never "deleted"."""
+    listed = {row["name"] for row in client.get("/api/constructors?limit=100").json()["items"]}
+    assert listed.isdisjoint(analytics.HIDDEN_CONSTRUCTORS)
+
+    teams = {t["constructor_name"] for t in client.get("/api/cars").json()["teams"]}
+    assert teams.isdisjoint(analytics.HIDDEN_CONSTRUCTORS)
+
+    hits = client.get("/api/search?q=Benetton").json()["results"]
+    assert not [h for h in hits if h["kind"] == "constructor"]
+
+
+def test_hidden_constructors_still_count_in_every_aggregate(client):
+    """The seasons they raced in must be unchanged -- this hides, it never deletes."""
+    # An active team: 2025 is incomplete without it.
+    names_2025 = {c["name"] for c in client.get("/api/seasons/2025").json()["constructors"]}
+    assert "RB F1 Team" in names_2025
+
+    names_2000 = {c["name"] for c in client.get("/api/seasons/2000").json()["constructors"]}
+    assert {"BAR", "Benetton"} <= names_2000
+
+    # And their pages still resolve, so a race classification can link to them.
+    assert client.get("/api/constructors/6").status_code == 200
+
+
+def test_car_library_groups_constructor_seasons(client):
+    body = client.get("/api/cars").json()
+    assert body["chassis_available"] is False, "the source has no chassis column; do not claim otherwise"
+    team = body["teams"][0]
+    assert team["cars"], "every listed team must have at least one constructor-season"
+    seasons = [car["season"] for car in team["cars"]]
+    assert seasons == sorted(seasons, reverse=True), "cars run newest first"
+    assert team["seasons"] == len(team["cars"])
+    assert {car["era"] for car in team["cars"]} <= {"current", "recent", "retired"}
+
+
 def test_global_search_spans_entity_types(client):
     results = client.get("/api/search?q=Ferrari").json()["results"]
     assert any(r["kind"] == "constructor" for r in results)
+
+
+def test_global_search_finds_races_by_season_and_venue(client):
+    """"2004 monza" is a season filter plus a venue, not one literal string."""
+    results = client.get("/api/search?q=2004 monza").json()["results"]
+    races = [r for r in results if r["kind"] == "race"]
+    assert races, "a season + venue query should reach the race index"
+    assert all(r["label"].startswith("2004") for r in races)
+    # The bare year still resolves to the season itself.
+    assert any(r["kind"] == "season" and r["label"] == "2004" for r in results)
 
 
 def test_search_requires_a_query(client):

@@ -63,8 +63,9 @@ export function ChartFrame({
   );
 }
 
-export const AXIS = "#232c37";
-export const TICK = "#6f7a89";
+/* Kept as re-exports so existing chart imports keep working; the values
+   themselves now live in palette.ts and point at design tokens. */
+export { AXIS, TICK } from "./palette";
 
 /** Evenly spaced, human-round tick values for a 0..max axis. */
 export function ticks(max: number, count = 4): number[] {

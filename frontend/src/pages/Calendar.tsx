@@ -18,6 +18,7 @@ import {
 import { useApi, useDebounced } from "../hooks/useApi";
 import { count, useDataset } from "../hooks/useDataset";
 import { qs } from "../services/api";
+import { seriesColour } from "../charts/palette";
 import type {
   Race,
   RaceDetail as RaceDetailType,
@@ -221,20 +222,7 @@ export function SeasonDetail() {
                     }
                   }
                   const order = [...tally.entries()].sort((a, b) => b[1] - a[1]).map(([name]) => name);
-                  const palette = [
-                    "#E10600",
-                    "#0090FF",
-                    "#F59E0B",
-                    "#22C55E",
-                    "#A855F7",
-                    "#14B8A6",
-                    "#EC4899",
-                    "#94A3B8",
-                  ];
-                  const colour = (name: string | null) =>
-                    name && order.indexOf(name) >= 0
-                      ? palette[order.indexOf(name) % palette.length]
-                      : "var(--border)";
+                  const colour = (name: string | null) => seriesColour(name, order);
                   return (
                     <>
                       <PaneHead
@@ -497,15 +485,28 @@ export function RaceIndex() {
                   {
                     key: "name",
                     header: "Race · circuit",
+                    /* Mockup § 06 puts the track outline in the row itself.
+                       Circuits without an SVG simply render no thumbnail. */
                     render: (r) => (
-                      <>
-                        <Link to={`/races/${r.id}`} style={{ fontWeight: 500 }}>
-                          {r.name}
-                        </Link>
-                        <div className="mono" style={{ fontSize: 11, color: "var(--text-faint)" }}>
-                          {r.season} · {r.circuit_name}
-                        </div>
-                      </>
+                      <span className="race-row">
+                        <img
+                          className="race-row__map"
+                          src={`/circuits/${r.circuit_slug}.svg`}
+                          alt=""
+                          loading="lazy"
+                          onError={(event) => {
+                            event.currentTarget.style.visibility = "hidden";
+                          }}
+                        />
+                        <span style={{ minWidth: 0 }}>
+                          <Link to={`/races/${r.id}`} style={{ fontWeight: 500 }}>
+                            {r.name}
+                          </Link>
+                          <span className="mono race-row__sub">
+                            {r.season} · {r.circuit_name}
+                          </span>
+                        </span>
+                      </span>
                     ),
                   },
                   { key: "date", header: "Date", render: (r) => <span className="mono">{formatDate(r.date)}</span> },
@@ -679,6 +680,24 @@ export function RaceDetail() {
               ]}
             />
           </Panel>
+
+          {/* Mockup § 06 closes the race page with a related-links strip. */}
+          <div className="related mono">
+            <span className="related__label">RELATED</span>
+            <Link to={`/seasons/${race.season}`}>{race.season} season →</Link>
+            <Link to={`/circuits/${race.circuit_id}`}>{race.circuit_name} →</Link>
+            {race.results[0] && (
+              <>
+                <Link to={`/drivers/${race.results[0].driver_id}`}>{race.results[0].driver_name} →</Link>
+                <Link to={`/constructors/${race.results[0].constructor_id}`}>
+                  {race.results[0].constructor_name} →
+                </Link>
+              </>
+            )}
+            <span className="related__note">
+              Qualifying, fastest-lap and pit-stop data are outside this dataset.
+            </span>
+          </div>
         </>
       )}
     </Async>

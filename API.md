@@ -206,9 +206,19 @@ asserts a cause.
 Schema shape, row counts, coverage, `available_fields`, `unavailable_fields`
 and `known_issues`. No filesystem paths or connection details.
 
+### `GET /api/cars`
+Constructor-seasons grouped by constructor — the Car Library's unit, since the
+source carries no chassis designations. Each car reports races, entries, wins,
+podiums, best classified position, average classified position, the drivers who
+raced it, and an `era` (`current` / `recent` / `retired`) derived from the
+season relative to the dataset's last. `chassis_available` is always `false`
+until a chassis dataset is added.
+
 ### `GET /api/search`
-Global search across drivers, constructors, circuits and seasons. `q` (1–100
-chars, required), `limit` (1–25). Prefix matches rank first, then by wins.
+Global search across drivers, constructors, circuits, races and seasons. `q`
+(1–100 chars, required), `limit` (1–25). Prefix matches rank first, then by
+wins. A query containing a four-digit year is split into a season filter and a
+name, so `2004 monza` finds the 2004 Italian Grand Prix.
 
 ---
 

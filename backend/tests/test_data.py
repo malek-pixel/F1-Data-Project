@@ -7,6 +7,7 @@ wrong number.
 from __future__ import annotations
 
 import csv
+from pathlib import Path
 
 import pytest
 
@@ -124,3 +125,37 @@ def test_database_is_read_only(conn):
 
     with pytest.raises(sqlite3.OperationalError):
         conn.execute("DELETE FROM results")
+
+
+def test_no_hardcoded_season_span_in_application_code():
+    """No module may state the coverage window as a literal.
+
+    A span written into a methodology string is correct only until the next
+    ingestion, after which it silently describes the wrong window -- which is
+    worse than stating no window. `analytics.coverage_span()` reads it from the
+    data instead. The one permitted occurrence is that helper's own docstring,
+    which uses the current span as an illustrative example.
+    """
+    import re
+
+    app_dir = Path(__file__).resolve().parents[1] / "app"
+    span = re.compile(r"\b(19|20)\d{2}\s*-\s*(19|20)\d{2}\b")
+
+    offenders = []
+    for path in sorted(app_dir.rglob("*.py")):
+        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if not span.search(line):
+                continue
+            # The helper documents the format it returns.
+            if path.name == "analytics.py" and "The dataset's season range" in line:
+                continue
+            offenders.append(f"{path.relative_to(app_dir)}:{lineno}: {line.strip()}")
+
+    assert not offenders, "hardcoded season span; use analytics.coverage_span():\n" + "\n".join(offenders)
+
+
+def test_coverage_span_matches_the_data(conn):
+    from backend.app import analytics
+
+    lo, hi = conn.execute("SELECT MIN(season), MAX(season) FROM races").fetchone()
+    assert analytics.coverage_span(conn) == f"{lo}-{hi}"

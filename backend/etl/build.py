@@ -92,6 +92,56 @@ def load_raw(path: Path) -> list[dict[str, str]]:
         return list(reader)
 
 
+ENRICHMENT_CSV = Path(__file__).resolve().parents[2] / "data" / "jolpica_results.csv"
+SPRINT_CSV = Path(__file__).resolve().parents[2] / "data" / "jolpica_sprints.csv"
+
+# Columns pulled from the enrichment, in the order the INSERT expects them.
+_ENRICHMENT_FIELDS = ("classification", "position_text", "status", "points", "grid", "laps")
+
+
+def load_enrichment() -> dict[tuple[int, int, int], dict[str, str]]:
+    """Finishing status, points, grid and laps, keyed by (season, round, position).
+
+    Optional by design. `results.csv` remains the only file this build
+    requires; without the enrichment every added column is simply NULL, which
+    is the honest representation of "not known here".
+    """
+    if not ENRICHMENT_CSV.exists():
+        return {}
+    with ENRICHMENT_CSV.open(newline="", encoding="utf-8") as handle:
+        return {
+            (int(r["season"]), int(r["round"]), int(r["position"])): r
+            for r in csv.DictReader(handle)
+        }
+
+
+def load_sprints() -> list[dict[str, str]]:
+    if not SPRINT_CSV.exists():
+        return []
+    with SPRINT_CSV.open(newline="", encoding="utf-8") as handle:
+        return list(csv.DictReader(handle))
+
+
+def _enrichment_values(enrichment: dict, row: dict) -> tuple:
+    """Enrichment columns for one result row, or NULLs when unavailable.
+
+    Numbers are converted here rather than at load: the CSV holds text, and a
+    string in a REAL column would compare and aggregate wrongly in SQLite,
+    which is untyped enough to accept it silently.
+    """
+    match = enrichment.get((row["season"], row["round"], row["position"]))
+    if match is None:
+        return (None,) * len(_ENRICHMENT_FIELDS)
+    return (
+        match["classification"],
+        match["position_text"],
+        match["status"],
+        float(match["points"]),
+        int(match["grid"]),
+        int(match["laps"]),
+    )
+
+
 def load_circuit_map(path: Path) -> list[dict[str, str]]:
     """Read the curated map, skipping the leading `#` comment block."""
     with path.open(newline="", encoding="utf-8") as handle:
@@ -259,10 +309,44 @@ CREATE TABLE results (
     race_id         INTEGER NOT NULL REFERENCES races(id),
     driver_id       INTEGER NOT NULL REFERENCES drivers(id),
     constructor_id  INTEGER NOT NULL REFERENCES constructors(id),
-    -- Final classification order, 1..N. NOT a "finishing position": the
-    -- source has no status column, so retirements are ranked here too.
-    -- See METHODOLOGY.md before deriving anything from this field.
+    -- Final classification order, 1..N. NOT a "finishing position": it ranks
+    -- retirements alongside finishers. Use `classification` to tell them
+    -- apart. See METHODOLOGY.md before deriving anything from this field.
     position        INTEGER NOT NULL,
+
+    -- Enrichment from data/jolpica_results.csv, joined on
+    -- (season, round, position). NULL where the enrichment file is absent, so
+    -- the build still works offline from results.csv alone.
+    --
+    -- 'classified' | 'retired' | 'disqualified' | 'withdrawn'. Note that
+    -- classified is NOT the same as finished: a driver several laps down is
+    -- classified. Whether they saw the flag is in `status`.
+    classification  TEXT CHECK (classification IN
+                        ('classified','retired','disqualified','withdrawn')),
+    position_text   TEXT,
+    -- Raw source text, 104 distinct values. Never collapsed into an enum.
+    status          TEXT,
+    points          REAL CHECK (points >= 0),
+    -- 0 is a REAL value: a pit lane start. It is not "unknown".
+    grid            INTEGER CHECK (grid >= 0),
+    laps            INTEGER CHECK (laps >= 0),
+    UNIQUE (race_id, driver_id)
+);
+
+CREATE TABLE sprint_results (
+    id              INTEGER PRIMARY KEY,
+    race_id         INTEGER NOT NULL REFERENCES races(id),
+    driver_id       INTEGER NOT NULL REFERENCES drivers(id),
+    constructor_id  INTEGER NOT NULL REFERENCES constructors(id),
+    position        INTEGER NOT NULL,
+    position_text   TEXT,
+    classification  TEXT,
+    status          TEXT,
+    points          REAL,
+    grid            INTEGER,
+    laps            INTEGER,
+    -- A separate event, not extra rows in `results`: merging the two would
+    -- double every driver's race count and corrupt every entry-based rate.
     UNIQUE (race_id, driver_id)
 );
 
@@ -333,16 +417,55 @@ def load(rows: list[dict], db_path: Path, report: Report) -> None:
             ],
         )
 
+        # Enrichment is optional: keyed by (season, round, position), it is
+        # looked up per row and left NULL when the file is absent, so a clone
+        # without it still builds a working database from results.csv alone.
+        enrichment = load_enrichment()
+
         conn.executemany(
-            "INSERT INTO results (race_id, driver_id, constructor_id, position) VALUES (?, ?, ?, ?)",
+            """INSERT INTO results
+                 (race_id, driver_id, constructor_id, position,
+                  classification, position_text, status, points, grid, laps)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             [
                 (
                     races[(r["season"], r["round"])],
                     drivers[r["driver"]],
                     constructors[r["constructor"]],
                     r["position"],
+                    *_enrichment_values(enrichment, r),
                 )
                 for r in rows
+            ],
+        )
+
+        sprints = load_sprints()
+        conn.executemany(
+            """INSERT INTO sprint_results
+                 (race_id, driver_id, constructor_id, position,
+                  position_text, classification, status, points, grid, laps)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            [
+                (
+                    races[(int(s["season"]), int(s["round"]))],
+                    drivers[s["driver"]],
+                    constructors[s["constructor"]],
+                    int(s["position"]),
+                    s["position_text"],
+                    s["classification"],
+                    s["status"],
+                    float(s["points"]),
+                    int(s["grid"]),
+                    int(s["laps"]),
+                )
+                for s in sprints
+                # A sprint entrant must already exist as a driver from
+                # results.csv. None are missing for 2021-2025; skipping rather
+                # than inventing a driver keeps the dimension source-faithful,
+                # and the count check in the report would surface a shortfall.
+                if (int(s["season"]), int(s["round"])) in races
+                and s["driver"] in drivers
+                and s["constructor"] in constructors
             ],
         )
 

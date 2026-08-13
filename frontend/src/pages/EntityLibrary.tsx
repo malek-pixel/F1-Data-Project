@@ -1,13 +1,22 @@
 import { useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { DataTable } from "../components/DataTable";
+import { motion } from "motion/react";
+
+import { Stagger, staggerItem } from "../components/motion";
+import { SearchField } from "../components/SearchField";
+import { driverPhoto } from "../components/driverPhoto";
+import { teamLogo } from "../components/teamLogo";
 import { Async } from "../components/States";
 import { dec, num, pct } from "../components/format";
-import { Badge, FilterChip, PageHeader, Pagination, Panel, PaneHead, PendingValue, Segmented } from "../components/ui";
+import { Badge, FilterChip, PageHeader, Pagination, Panel, PaneHead } from "../components/ui";
 import { useApi, useDebounced } from "../hooks/useApi";
 import { useCoverage } from "../hooks/useDataset";
 import { qs } from "../services/api";
 import type { NamedStats, Page } from "../types";
+
+/** Grid item and link in one element: an extra wrapper would become the grid
+ *  item and the card would lose the borders that draw the gallery's rules. */
+const MotionLink = motion.create(Link);
 
 const PAGE_SIZE = 25;
 
@@ -37,13 +46,11 @@ export function EntityLibrary({
   // The text input stays local so typing is not throttled by history writes;
   // the debounced value is what reaches the URL and the API.
   const [search, setSearch] = useState(urlSearch);
-  // The mockup has both an explorer table (section 03/04) and a library
-  // gallery (section 06/07) over the same entities. One toggle, not two
-  // routes: the data and every filter are identical, only the shape differs.
-  const [view, setView] = useState<"table" | "gallery">("table");
 
   const coverage = useCoverage();
   const debounced = useDebounced(search);
+  const logo = (name: string) => (kind === "constructors" ? teamLogo(name) : null);
+  const portrait = (name: string) => (kind === "drivers" ? driverPhoto(name) : null);
 
   const write = (next: Record<string, string | number | null>) => {
     const updated = new URLSearchParams(params);
@@ -75,18 +82,15 @@ export function EntityLibrary({
       />
 
       <div className="controls">
-        <div className="field">
-          <label htmlFor="lib-search">SEARCH</label>
-          <input
-            id="lib-search"
-            className="input"
-            type="search"
-            placeholder={kind === "drivers" ? "Driver name…" : "Constructor name…"}
-            value={search}
-            onChange={(event) => onSearch(event.target.value)}
-            style={{ minWidth: 220 }}
-          />
-        </div>
+        <SearchField
+          id="lib-search"
+          label="SEARCH"
+          className="searchfield--wide"
+          placeholder={kind === "drivers" ? "Driver name…" : "Constructor name…"}
+          value={search}
+          loading={state.loading}
+          onChange={onSearch}
+        />
         <div className="field">
           <label htmlFor="lib-sort">SORT BY</label>
           <select id="lib-sort" className="select" value={sort} onChange={(event) => setSort(event.target.value)}>
@@ -112,18 +116,6 @@ export function EntityLibrary({
             <option value={50}>50+</option>
             <option value={100}>100+</option>
           </select>
-        </div>
-        <div className="field">
-          <label htmlFor="lib-view">VIEW</label>
-          <Segmented
-            label={`${title} view`}
-            active={view}
-            onChange={setView}
-            options={[
-              { id: "table", label: "Table" },
-              { id: "gallery", label: "Gallery" },
-            ]}
-          />
         </div>
       </div>
 
@@ -160,18 +152,37 @@ export function EntityLibrary({
                   </button>
                 </div>
               )}
-              {view === "gallery" ? (
-                <div className="gallery">
+              {/* Cards, not a table. The mockup's library sections (06/07) are
+                  the primary shape for browsing entities; every column the
+                  explorer table carried is kept on the card, so nothing is
+                  lost by dropping the table. */}
+                <Stagger className="gallery">
                   {page.items.map((row, i) => (
-                    <Link key={row.id} to={`/${kind}/${row.id}`} className="gallery__card">
-                      {/* The mockup shows a driver portrait / team livery here.
-                          No image set ships with this dataset, so the frame
-                          stays and states that rather than showing a stock
-                          photo or an invented livery. */}
-                      <div className="gallery__media mono">
-                        {kind === "drivers" ? "PORTRAIT" : "LIVERY"}
-                        <span>to be added</span>
-                      </div>
+                    <MotionLink
+                      key={row.id}
+                      variants={staggerItem}
+                      to={`/${kind}/${row.id}`}
+                      className="gallery__card"
+                    >
+                      {/* Every driver has a portrait and every browsable
+                          constructor a logo. The labelled frame is the fallback
+                          for an entity a later ETL run adds before its artwork
+                          exists -- never a generic badge, which would imply an
+                          identity we do not have. */}
+                      {logo(row.name) ? (
+                        <div className="gallery__media gallery__media--logo">
+                          <img src={logo(row.name)!} alt="" loading="lazy" decoding="async" width={320} height={320} />
+                        </div>
+                      ) : portrait(row.name) ? (
+                        <div className="gallery__media gallery__media--portrait">
+                          <img src={portrait(row.name)!} alt="" loading="lazy" decoding="async" width={340} height={340} />
+                        </div>
+                      ) : (
+                        <div className="gallery__media mono">
+                          {kind === "drivers" ? "PORTRAIT" : "LIVERY"}
+                          <span>to be added</span>
+                        </div>
+                      )}
                       <div className="gallery__rank mono">
                         {String(page.offset + i + 1).padStart(2, "0")}
                       </div>
@@ -186,100 +197,55 @@ export function EntityLibrary({
                         <span>
                           S <strong>{num(row.entries)}</strong>
                         </span>
-                        <span className="pending" title="Titles require a points column">
+                      </div>
+                      <div className="gallery__stats mono" style={{ marginTop: 4 }}>
+                        <span
+                          style={row.rates_reliable ? undefined : { color: "var(--warning)" }}
+                          title={row.rates_reliable ? undefined : `Small sample: ${row.entries} entries`}
+                        >
+                          WIN% <strong>{pct(row.win_rate)}</strong>
+                          {!row.rates_reliable && <span aria-label=" (small sample)"> *</span>}
+                        </span>
+                        <span>
+                          AVG P <strong>{dec(row.avg_classified_position)}</strong>
+                        </span>
+                      </div>
+                      {/* The mockup's cards carry nationality / base and title
+                          counts. Neither is in the seven source columns, so the
+                          slot states that rather than quietly disappearing. */}
+                      <div className="gallery__stats mono" style={{ marginTop: 4 }}>
+                        <span
+                          className="pending"
+                          title={
+                            kind === "drivers"
+                              ? "Nationality is not in results.csv -- Ergast drivers.csv would supply it"
+                              : "Team base is not in results.csv -- Ergast constructors.csv would supply it"
+                          }
+                        >
+                          {kind === "drivers" ? "NAT" : "BASE"} —
+                        </span>
+                        <span
+                          className="pending"
+                          title="Championship titles need a points column; results.csv has none"
+                        >
                           WDC —
                         </span>
                       </div>
-                    </Link>
+                    </MotionLink>
                   ))}
                   {page.items.length === 0 && (
-                    <p className="table-empty">No {kind} match these filters.</p>
+                    <p className="table-empty">
+                      {debounced
+                        ? `No ${kind} match “${debounced}” with these filters.`
+                        : `No ${kind} match these filters.`}
+                    </p>
                   )}
-                </div>
-              ) : (
-              <DataTable
-                caption={`${title} ranked by ${sort}`}
-                rows={page.items}
-                rowKey={(row) => row.id}
-                sort={sort}
-                onSort={setSort}
-                emptyMessage={
-                  debounced
-                    ? `No ${kind} match “${debounced}” with these filters.`
-                    : `No ${kind} match these filters.`
-                }
-                columns={[
-                  {
-                    key: "rank",
-                    header: "#",
-                    numeric: true,
-                    render: (_r, i) => <span className="mono rank">{String(page.offset + i + 1).padStart(2, "0")}</span>,
-                  },
-                  {
-                    key: "name",
-                    header: kind === "drivers" ? "Driver" : "Constructor",
-                    sortKey: "name",
-                    render: (row) => (
-                      <Link to={`/${kind}/${row.id}`} style={{ fontWeight: 500 }}>
-                        {row.name}
-                      </Link>
-                    ),
-                  },
-                  /* The mockup carries nationality (drivers) and base (teams).
-                     Neither is in the seven source columns, so the column stays
-                     and says so rather than disappearing from the design. */
-                  {
-                    key: "meta",
-                    header: kind === "drivers" ? "Nat" : "Base",
-                    render: () => (
-                      <PendingValue
-                        title={
-                          kind === "drivers"
-                            ? "Nationality is not in results.csv -- Ergast drivers.csv would supply it"
-                            : "Team base is not in results.csv -- Ergast constructors.csv would supply it"
-                        }
-                      />
-                    ),
-                  },
-                  { key: "entries", header: "Starts", numeric: true, sortKey: "entries", render: (r) => num(r.entries) },
-                  { key: "wins", header: "Wins", numeric: true, sortKey: "wins", render: (r) => num(r.wins) },
-                  { key: "podiums", header: "Pods", numeric: true, sortKey: "podiums", render: (r) => num(r.podiums) },
-                  {
-                    key: "win_rate",
-                    header: "Win rate",
-                    numeric: true,
-                    sortKey: "win_rate",
-                    render: (r) => (
-                      <span
-                        style={r.rates_reliable ? undefined : { color: "var(--warning)" }}
-                        title={r.rates_reliable ? undefined : `Small sample: ${r.entries} entries`}
-                      >
-                        {pct(r.win_rate)}
-                        {!r.rates_reliable && <span aria-label=" (small sample)"> *</span>}
-                      </span>
-                    ),
-                  },
-                  {
-                    key: "avg",
-                    header: "Avg P",
-                    numeric: true,
-                    sortKey: "avg_position",
-                    render: (r) => dec(r.avg_classified_position),
-                  },
-                  {
-                    key: "titles",
-                    header: kind === "drivers" ? "Titles" : "Titles",
-                    numeric: true,
-                    render: () => <PendingValue title="Championship titles need a points column; results.csv has none" />,
-                  },
-                ]}
-              />
-              )}
+                </Stagger>
             </Panel>
             <Pagination total={page.total} limit={page.limit} offset={page.offset} onChange={setOffset} />
             <p style={{ fontSize: 12, color: "var(--text-faint)" }}>
-              * fewer than 10 entries — rate shown but not comparable. Columns marked “— to be
-              added” need source columns the dataset does not have yet.
+              * fewer than 10 entries — rate shown but not comparable. Fields marked “—” need source
+              columns the dataset does not have yet.
             </p>
           </>
         )}

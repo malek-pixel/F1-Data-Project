@@ -6,6 +6,11 @@ __pycache__/
 # so it is not tracked. Run: python -m backend.etl.build
 data/f1.db
 
+# Raw API responses from Jolpica-F1. A cache, not a source: the committed
+# artefacts are data/jolpica_results.csv and data/jolpica_sprints.csv, which
+# are checksummed and rebuilt from this. Delete to force a refetch.
+data/cache/
+
 # Secrets. .env.example is tracked and holds placeholders only.
 .env
 .env.local

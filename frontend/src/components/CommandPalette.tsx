@@ -4,10 +4,11 @@ import { useApi, useDebounced } from "../hooks/useApi";
 import { qs } from "../services/api";
 import type { SearchHit } from "../types";
 
-const ROUTE: Record<SearchHit["kind"], (id: number) => string> = {
+export const ROUTE: Record<SearchHit["kind"], (id: number) => string> = {
   driver: (id) => `/drivers/${id}`,
   constructor: (id) => `/constructors/${id}`,
   circuit: (id) => `/circuits/${id}`,
+  race: (id) => `/races/${id}`,
   season: (id) => `/seasons/${id}`,
 };
 
@@ -30,7 +31,13 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
   const { data, loading } = useApi<{ results: SearchHit[] }>(
     debounced.trim() ? `/search${qs({ q: debounced.trim(), limit: 8 })}` : null,
   );
-  const results = data?.results ?? [];
+  // The modal stays a jump-to-thing, not a results browser: it shows the top
+  // handful and hands the rest to the full search page (mockup § 13).
+  const results = (data?.results ?? []).slice(0, 8);
+  const query_ = debounced.trim();
+  // The "see all" row is the last item in the same arrow-key list, so Enter on
+  // it behaves like Enter on any other row.
+  const rowCount = results.length + (query_ ? 1 : 0);
 
   useEffect(() => {
     if (open) {
@@ -51,6 +58,10 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
     navigate(ROUTE[hit.kind](hit.id));
     onClose();
   };
+  const goAll = () => {
+    navigate(`/search${qs({ q: query_ })}`);
+    onClose();
+  };
 
   return (
     <div
@@ -65,7 +76,16 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
           value={query}
           placeholder="Search drivers, teams, circuits, seasons…"
           aria-label="Search query"
+          role="combobox"
+          aria-expanded="true"
           aria-controls="palette-results"
+          // Without this the listbox has a visually highlighted row that no
+          // screen reader ever announces: arrow keys move a `data-active`
+          // flag while focus never leaves the input.
+          aria-activedescendant={
+            results[active] ? `palette-opt-${results[active].kind}-${results[active].id}`
+              : query_ && active === results.length ? "palette-opt-all" : undefined
+          }
           onChange={(event) => setQuery(event.target.value)}
           onKeyDown={(event) => {
             if (event.key === "Escape") onClose();
@@ -76,24 +96,35 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
             if (event.key === "Tab") event.preventDefault();
             if (event.key === "ArrowDown") {
               event.preventDefault();
-              setActive((i) => Math.min(i + 1, results.length - 1));
+              setActive((i) => Math.min(i + 1, rowCount - 1));
             }
             if (event.key === "ArrowUp") {
               event.preventDefault();
               setActive((i) => Math.max(i - 1, 0));
             }
-            if (event.key === "Enter" && results[active]) go(results[active]);
+            if (event.key === "Enter") {
+              if (results[active]) go(results[active]);
+              else if (query_) goAll();
+            }
           }}
         />
         <ul className="palette__results" id="palette-results" role="listbox" aria-label="Search results">
           {loading && <li style={{ padding: 16, fontSize: 13, color: "var(--text-dim)" }}>Searching…</li>}
-          {!loading && debounced.trim() && results.length === 0 && (
+          {!loading && !query_ && (
             <li style={{ padding: 16, fontSize: 13, color: "var(--text-dim)" }}>
-              No matches for “{debounced}”.
+              Search drivers, constructors, circuits, races and seasons.{" "}
+              <span className="mono" style={{ color: "var(--text-faint)" }}>
+                Try “alonso”, “2004 monza”, “spa”.
+              </span>
+            </li>
+          )}
+          {!loading && query_ && results.length === 0 && (
+            <li style={{ padding: 16, fontSize: 13, color: "var(--text-dim)" }}>
+              No matches for “{debounced}”. Coverage starts in 2000 — earlier records are outside this dataset.
             </li>
           )}
           {results.map((hit, index) => (
-            <li key={`${hit.kind}-${hit.id}`} role="option" aria-selected={index === active}>
+            <li key={`${hit.kind}-${hit.id}`} id={`palette-opt-${hit.kind}-${hit.id}`} role="option" aria-selected={index === active}>
               <button
                 className="palette__item"
                 data-active={index === active}
@@ -106,6 +137,20 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
               </button>
             </li>
           ))}
+          {query_ && (
+            <li id="palette-opt-all" role="option" aria-selected={active === results.length}>
+              <button
+                className="palette__item"
+                data-active={active === results.length}
+                onMouseEnter={() => setActive(results.length)}
+                onClick={goAll}
+              >
+                <span className="palette__kind">ALL</span>
+                <span>See all results for “{query_}”</span>
+                <span className="palette__sub mono">↵</span>
+              </button>
+            </li>
+          )}
         </ul>
       </div>
     </div>

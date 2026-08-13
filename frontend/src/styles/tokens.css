@@ -11,7 +11,12 @@
   --border: #232c37;
   --text: #f5f7fa;
   --text-dim: #aab4c2;
-  --text-faint: #6f7a89;
+  /* The mockup's faint grey is #6F7A89, which measures 4.17:1 on --surface --
+     below the 4.5:1 AA floor for the 10-12px notes and captions it is used
+     for, on a design whose own header claims WCAG AA. Lightened by the
+     smallest step that clears it: 4.85:1 on --surface, 4.62:1 on --elevated,
+     5.29:1 on --bg. */
+  --text-faint: #7a8593;
 
   --accent: #e10600;
   /* The brand accent is 3.66:1 on --surface: fine for large numerals, fills

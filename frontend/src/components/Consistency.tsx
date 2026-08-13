@@ -7,6 +7,7 @@ import { MethodologyNote } from "./MethodologyNote";
 import { ChartFrame } from "../charts/Chart";
 import { useApi } from "../hooks/useApi";
 import type { Distribution, DriverCircuitsResponse, Stats } from "../types";
+import { SERIES } from "../charts/palette";
 
 /**
  * Where a driver's results actually landed.
@@ -62,7 +63,7 @@ function PositionHistogram({ dist }: { dist: Distribution }) {
           const barWidth = (bucket.count / max) * (width - 150);
           return (
             <g key={bucket.bucket}>
-              <text x="0" y={y + 14} fontSize="11" fill="#aab4c2" fontFamily="var(--mono)">
+              <text x="0" y={y + 14} fontSize="11" fill="var(--text-dim)" fontFamily="var(--mono)">
                 {bucket.bucket}
               </text>
               <rect
@@ -71,11 +72,11 @@ function PositionHistogram({ dist }: { dist: Distribution }) {
                 width={Math.max(bucket.count > 0 ? 2 : 0, barWidth)}
                 height="14"
                 rx="2"
-                fill={index <= 1 ? "#e10600" : index <= 3 ? "#0090ff" : "#3a4553"}
+                fill={index <= 1 ? SERIES[0] : index <= 3 ? SERIES[1] : "var(--text-faint)"}
               >
                 <title>{`${bucket.bucket}: ${bucket.count} entries (${(bucket.share * 100).toFixed(1)}%)`}</title>
               </rect>
-              <text x={68 + barWidth} y={y + 14} fontSize="11" fill="#6f7a89" fontFamily="var(--mono)">
+              <text x={68 + barWidth} y={y + 14} fontSize="11" fill="var(--text-faint)" fontFamily="var(--mono)">
                 {bucket.count}
               </text>
             </g>

@@ -20,10 +20,11 @@ number.
 - **Circuit records** — each driver's record at a circuit against their own career norm
 - **Season dominance and era views** — win share normalised by races held
 - **Head-to-head comparison** — raw totals and per-start rates shown separately, with an overlapping-seasons window, because career totals across different eras are not a like-for-like comparison
-- **Records and insights** — calculated, each stating its own methodology
+- **Records, eras and season dominance** — calculated, each stating its own methodology
 - **Dataset explorer** — schema, coverage, and the dataset's own known issues
-- **Methodology** — every formula, denominator and limitation
-- **Global search** (⌘K), keyboard-navigable
+- **Car library** — one entry per constructor-season, grouped by team and era
+- **Metric definitions** — every formula, denominator and limitation, on the Insights page
+- **Global search** — a full page (`/search`) plus the ⌘K palette, both keyboard-navigable
 
 ## What it deliberately does not do
 

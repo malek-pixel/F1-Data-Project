@@ -16,10 +16,17 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from . import backends
 from .db import connect
 from .routers import analysis, analytics_router, calendar, entities
 
 log = logging.getLogger(__name__)
+
+# Fail at import, not on the first request. A backend misconfiguration is a
+# deployment error; discovering it as an intermittent 503 later is strictly
+# worse than refusing to start.
+ACTIVE_BACKEND = backends.check_ready()
+log.info("Serving from backend: %s", ACTIVE_BACKEND)
 
 # Origins are configured, never wildcarded -- the default covers the local
 # Vite dev server only.
@@ -29,7 +36,12 @@ app = FastAPI(
     title="F1 Data Project API",
     version="1.0.0",
     description=(
-        "Analytical API over 2000-2025 Formula 1 race classifications.\n\n"
+        # No season range here on purpose: this string is built once at import,
+        # before any connection exists, so a literal would be a claim nothing
+        # re-checks. The live window is served by `/api/dataset/summary`.
+        "Analytical API over Formula 1 race classifications.\n\n"
+        "The seasons covered are whatever the build contains -- see "
+        "`/api/dataset/summary` for the authoritative window.\n\n"
         "Every derived number is defined once in `backend/app/analytics.py`. "
         "Qualifying, points, finishing status, lap times and car specifications are "
         "absent from the source data and are never estimated -- see `/api/dataset/summary`."
@@ -90,4 +102,7 @@ def health():
         "circuits": counts["circuits"],
         "circuits_with_map": mapped,
         "live_data": False,
+        # Which store actually answered, and what it can answer. Stated so a
+        # reader never has to infer the backend from the numbers.
+        **backends.describe(),
     }

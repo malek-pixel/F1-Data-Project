@@ -5,7 +5,7 @@ import { num, pct } from "../components/format";
 import { Badge, CellGrid, PageHeader, PaneHead, Panel, PendingCell, SectionTitle } from "../components/ui";
 import { useApi } from "../hooks/useApi";
 import { useCoverage } from "../hooks/useDataset";
-import type { DatasetSummary, Era, Insight, RecordEntry, SeasonRow } from "../types";
+import type { DatasetSummary, Era, MetricDoc, RecordEntry, SeasonRow } from "../types";
 
 export function Records() {
   const coverage = useCoverage();
@@ -73,6 +73,12 @@ export function Records() {
                   <PendingCell label="FEWEST DNFs / RACE" why="No finishing-status column in the source" />
                 </CellGrid>
               </Panel>
+
+              {/* Insights was removed; these two views are aggregate records
+                  in their own right, so they live here rather than being
+                  deleted along with the page that used to host them. */}
+              <EraSection />
+              <DominanceSection />
             </>
           );
         }}
@@ -81,43 +87,31 @@ export function Records() {
   );
 }
 
-export function Insights() {
-  const state = useApi<{ insights: Insight[] }>("/insights?limit=12");
+/**
+ * Metric definitions strip (mockup § 09).
+ *
+ * Rendered from `/analytics/metrics` — the same registry the analytics code
+ * computes from, so a definition here cannot drift from its implementation.
+ */
+function MetricDefinitions() {
+  const state = useApi<{ metrics: MetricDoc[] }>("/analytics/metrics");
   return (
-    <>
-      <PageHeader
-        eyebrow="INSIGHTS"
-        title="Insights"
-        sub="Observations derived from the data. Each states the query it came from."
-      />
-      <p style={{ fontSize: 13, color: "var(--text-dim)" }}>
-        <Badge tone="info">Descriptive only</Badge> These describe what the results record, never why. The dataset
-        contains no explanatory variables — no car data, no reliability, no team budgets — so no causal claim can be
-        supported.
-      </p>
-      <SectionTitle aside="CALCULATED FROM THE DATASET">Observations</SectionTitle>
-      <Async state={state} loadingRows={6}>
+    <Panel>
+      <PaneHead title="METRIC DEFINITIONS" meta="REPRODUCIBLE FROM THE DATASET" />
+      <Async state={state} loadingRows={4}>
         {(payload) => (
-          <div className="grid grid--2">
-            {payload.insights.map((insight) => (
-              <div className="card" key={insight.headline}>
-                <div className="card__label mono">{insight.kind.replace("_", " ").toUpperCase()}</div>
-                <h3 className="card__title" style={{ fontSize: 16, marginBottom: 8 }}>
-                  {insight.headline}
-                </h3>
-                <p style={{ fontSize: 13, color: "var(--text-dim)", margin: "0 0 10px" }}>{insight.detail}</p>
-                <p style={{ fontSize: 12, color: "var(--text-faint)", margin: 0 }}>
-                  <strong>Basis:</strong> {insight.basis}
-                </p>
+          <div className="defs">
+            {payload.metrics.map((metric) => (
+              <div className="defs__item" key={metric.key}>
+                <div className="mono defs__name">{metric.name.toUpperCase()}</div>
+                <p className="defs__body">{metric.definition}</p>
+                <p className="mono defs__formula">{metric.formula}</p>
               </div>
             ))}
           </div>
         )}
       </Async>
-
-      <EraSection />
-      <DominanceSection />
-    </>
+    </Panel>
   );
 }
 
@@ -208,6 +202,9 @@ export function Dataset() {
         title="Dataset Explorer"
         sub="What is in the source data, what is not, and where it is imperfect."
       />
+      {/* How each number is defined belongs with the schema it is derived
+          from. It moved here when the Insights page was removed. */}
+      <MetricDefinitions />
       <Async state={state} loadingRows={8}>
         {(summary) => (
           <>
@@ -297,100 +294,6 @@ export function Dataset() {
           </>
         )}
       </Async>
-    </>
-  );
-}
-
-/**
- * Car Library.
- *
- * The design specifies this page, and there is no car data of any kind in the
- * source. Rather than invent chassis, engine or performance figures, the page
- * ships as an honest empty shell that documents the schema real data would
- * populate.
- */
-export function CarLibrary() {
-  return (
-    <>
-      <PageHeader
-        eyebrow="LIBRARIES"
-        title="Cars"
-        sub="Car specifications are not part of the current dataset."
-      />
-
-      <div className="card" style={{ marginBottom: 24 }}>
-        <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 12, flexWrap: "wrap" }}>
-          <Badge tone="warning">No data source</Badge>
-          <strong style={{ fontSize: 15 }}>This section has no backing data.</strong>
-        </div>
-        <p style={{ fontSize: 14, color: "var(--text-dim)", maxWidth: "72ch" }}>
-          The source (<code style={{ fontFamily: "var(--mono)" }}>results.csv</code>) contains race
-          classifications only — season, round, race, date, position, driver and constructor. It carries no chassis
-          designations and no car specifications. Rather than populate this page with figures sourced from
-          elsewhere and presented as if they came from the dataset, it stays empty until a real car dataset is added.
-        </p>
-        <p style={{ fontSize: 14, color: "var(--text-dim)", maxWidth: "72ch" }}>
-          Constructor performance by season <em>is</em> available and is the closest supported equivalent — see any
-          constructor page.
-        </p>
-      </div>
-
-      <Panel>
-        <PaneHead title="Fields a car dataset would provide" meta="ALL PENDING — NO CAR SOURCE" />
-        <CellGrid cols={3}>
-          <PendingCell label="CHASSIS" why="No chassis-designation column" />
-          <PendingCell label="CONSTRUCTOR · ENGINE" why="No power-unit column" />
-          <PendingCell label="SEASON" why="Would come with a chassis table" />
-          <PendingCell label="POWER" why="Not published in a machine-readable public dataset" />
-          <PendingCell label="WEIGHT" why="No car metadata in the dataset" />
-          <PendingCell label="AERO CONFIGURATION" why="No car metadata in the dataset" />
-        </CellGrid>
-        <CellGrid cols={3}>
-          <PendingCell label="FASTEST LAPS" why="No fastest-lap column in the source" />
-          <PendingCell label="POINTS" why="No points column in the source" />
-          <PendingCell label="RELIABILITY" why="Needs finishing status; retirements are ranked, not flagged" />
-        </CellGrid>
-      </Panel>
-
-      {/* The mockup's chassis table, with the columns it would carry. It is
-          rendered as an empty table rather than omitted, so the shape of the
-          missing data is visible. */}
-      <Panel>
-        <PaneHead title="Chassis table" meta="0 ROWS — AWAITING A CAR DATASET" />
-        <div className="table-scroll">
-          <table className="data">
-            <caption
-              style={{ position: "absolute", width: 1, height: 1, overflow: "hidden", clip: "rect(0 0 0 0)" }}
-            >
-              Chassis table, empty pending a car dataset
-            </caption>
-            <thead>
-              <tr>
-                {["Chassis", "Constructor · engine", "Season", "Drivers", "W", "Podiums", "Poles", "FL", "Pts", "Reliability"].map(
-                  (header) => (
-                    <th key={header} scope="col">
-                      {header}
-                    </th>
-                  ),
-                )}
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td colSpan={10} className="table-empty">
-                  No chassis rows. The source carries race classifications only — adding a car dataset fills this
-                  table without reshaping any existing one.
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </Panel>
-
-      <p style={{ fontSize: 12, color: "var(--text-faint)", marginTop: 24, maxWidth: "72ch" }}>
-        The database schema is designed so a <code style={{ fontFamily: "var(--mono)" }}>cars</code> table keyed on
-        constructor and season can be added without reshaping existing tables.
-      </p>
     </>
   );
 }

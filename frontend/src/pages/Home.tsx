@@ -1,8 +1,8 @@
 import { Link } from "react-router-dom";
-import { DataTable } from "../components/DataTable";
 import { Async } from "../components/States";
 import { dec, formatDate, num } from "../components/format";
 import { Badge } from "../components/ui";
+import { seriesColour as colourFor } from "../charts/palette";
 import { useApi } from "../hooks/useApi";
 import type { DatasetSummary, Health, Insight, RaceDetail, SeasonRounds, SeasonSummary } from "../types";
 
@@ -32,21 +32,6 @@ function Kpi({ label, value, sub, note }: { label: string; value: string; sub?: 
   );
 }
 
-/**
- * Constructor colours for the round strip.
- *
- * Assigned by rank within the selected season, not from a table of team
- * liveries: the dataset spans 2000-2025, teams change owner and colour, and
- * several no longer exist. A positional palette stays legible without
- * asserting a brand identity the data does not carry.
- */
-const STRIP_COLOURS = ["#E10600", "#0090FF", "#F59E0B", "#22C55E", "#A855F7", "#14B8A6", "#EC4899", "#94A3B8"];
-
-function colourFor(name: string | null, order: string[]): string {
-  if (!name) return "var(--border)";
-  const i = order.indexOf(name);
-  return i === -1 ? "var(--text-faint)" : STRIP_COLOURS[i % STRIP_COLOURS.length];
-}
 
 export function Home() {
   const health = useApi<Health>("/health");
@@ -64,6 +49,11 @@ export function Home() {
 
   return (
     <>
+      {/* The design opens Home directly on the KPI strip, with no page title.
+          A document still needs one h1, so it is present for assistive tech
+          and hidden visually rather than changing the layout. */}
+      <h1 className="sr-only">Overview</h1>
+
       <div className="panel">
         <Async state={season} loadingRows={3}>
           {(summary) => {
@@ -120,50 +110,89 @@ export function Home() {
       </p>
 
       <Async state={season} loadingRows={8}>
-        {(summary) => (
-          <div className="split">
-            <div className="split__pane">
-              <div className="pane__head">
-                <span className="pane__title">Drivers · by wins</span>
-                <span className="pane__meta mono">{summary.season} · WINS · PODIUMS · AVG P</span>
+        {(summary) => {
+          const drivers = summary.drivers.slice(0, 8);
+          const teams = summary.constructors.slice(0, 8);
+          const teamOrder = summary.constructors.map((c) => c.name);
+          const leadWins = teams[0]?.wins ?? 0;
+          return (
+            <div className="split">
+              {/* Mockup § 02: standings are grid rows with a team colour bar,
+                  not a table. PTS/GAP become wins/gap-in-wins -- no points
+                  column exists -- and the header says so. */}
+              <div className="split__pane">
+                <div className="pane__head">
+                  <h2 className="pane__title">Drivers · by wins</h2>
+                  <span className="pane__meta mono">{summary.season} · FINAL CLASSIFICATION</span>
+                </div>
+                <div className="standings" role="table" aria-label={`${summary.season} drivers ranked by wins`}>
+                  <div className="standings__head mono" role="row">
+                    <span role="columnheader">#</span>
+                    <span />
+                    <span role="columnheader">DRIVER</span>
+                    <span role="columnheader">PODS</span>
+                    <span role="columnheader">W</span>
+                    <span role="columnheader">GAP</span>
+                  </div>
+                  {drivers.map((row, i) => (
+                    <Link key={row.id} to={`/drivers/${row.id}`} className="standings__row" role="row">
+                      <span className="mono standings__rank">{i + 1}</span>
+                      {/* The mockup colours this bar by the driver's team. The
+                          season payload carries no per-driver constructor, so
+                          it stays neutral rather than colouring by guess. */}
+                      <span className="standings__flag" />
+                      <span className="standings__name">
+                        {row.name}
+                        <span className="mono standings__sub">
+                          {num(row.entries)} starts · avg P{dec(row.avg_classified_position)}
+                        </span>
+                      </span>
+                      <span className="mono standings__num">{num(row.podiums)}</span>
+                      <span className="mono standings__num standings__num--lead">{num(row.wins)}</span>
+                      <span className="mono standings__gap">
+                        {i === 0 ? "—" : `−${drivers[0].wins - row.wins}`}
+                      </span>
+                    </Link>
+                  ))}
+                </div>
               </div>
-              <DataTable
-                caption={`${summary.season} drivers ranked by wins`}
-                rows={summary.drivers.slice(0, 8)}
-                rowKey={(row) => row.id}
-                columns={[
-                  { key: "rank", header: "#", numeric: true, render: (_r, i) => <span className="mono">{i + 1}</span> },
-                  { key: "name", header: "Driver", render: (r) => <Link to={`/drivers/${r.id}`}>{r.name}</Link> },
-                  { key: "wins", header: "W", numeric: true, render: (r) => num(r.wins) },
-                  { key: "podiums", header: "Podiums", numeric: true, render: (r) => num(r.podiums) },
-                  { key: "avg", header: "Avg P", numeric: true, render: (r) => dec(r.avg_classified_position) },
-                ]}
-              />
-            </div>
-            <div className="split__pane">
-              <div className="pane__head">
-                <span className="pane__title">Constructors · by wins</span>
-                <span className="pane__meta mono">{summary.season} · WINS · PODIUMS · AVG P</span>
+
+              <div className="split__pane">
+                <div className="pane__head">
+                  <h2 className="pane__title">Constructors · by wins</h2>
+                  <span className="pane__meta mono">{summary.season} · FINAL CLASSIFICATION</span>
+                </div>
+                <div className="standings standings--team" role="table" aria-label={`${summary.season} constructors ranked by wins`}>
+                  <div className="standings__head mono" role="row">
+                    <span role="columnheader">#</span>
+                    <span />
+                    <span role="columnheader">CONSTRUCTOR</span>
+                    <span role="columnheader">SHARE</span>
+                    <span role="columnheader">W</span>
+                    <span role="columnheader">GAP</span>
+                  </div>
+                  {teams.map((row, i) => (
+                    <Link key={row.id} to={`/constructors/${row.id}`} className="standings__row" role="row">
+                      <span className="mono standings__rank">{i + 1}</span>
+                      <span className="standings__flag" style={{ background: colourFor(row.name, teamOrder) }} />
+                      <span className="standings__name">{row.name}</span>
+                      <span className="standings__share" title={`${row.wins} of ${leadWins} leader wins`}>
+                        <span
+                          style={{
+                            width: leadWins ? `${(row.wins / leadWins) * 100}%` : 0,
+                            background: colourFor(row.name, teamOrder),
+                          }}
+                        />
+                      </span>
+                      <span className="mono standings__num standings__num--lead">{num(row.wins)}</span>
+                      <span className="mono standings__gap">{i === 0 ? "—" : `−${teams[0].wins - row.wins}`}</span>
+                    </Link>
+                  ))}
+                </div>
               </div>
-              <DataTable
-                caption={`${summary.season} constructors ranked by wins`}
-                rows={summary.constructors.slice(0, 8)}
-                rowKey={(row) => row.id}
-                columns={[
-                  { key: "rank", header: "#", numeric: true, render: (_r, i) => <span className="mono">{i + 1}</span> },
-                  {
-                    key: "name",
-                    header: "Constructor",
-                    render: (r) => <Link to={`/constructors/${r.id}`}>{r.name}</Link>,
-                  },
-                  { key: "wins", header: "W", numeric: true, render: (r) => num(r.wins) },
-                  { key: "podiums", header: "Podiums", numeric: true, render: (r) => num(r.podiums) },
-                  { key: "avg", header: "Avg P", numeric: true, render: (r) => dec(r.avg_classified_position) },
-                ]}
-              />
             </div>
-          </div>
-        )}
+          );
+        }}
       </Async>
 
       <div className="panel panel--pad">
@@ -179,9 +208,9 @@ export function Home() {
             return (
               <>
                 <div className="pane__head pane__head--flush">
-                  <span className="pane__title">
+                  <h2 className="pane__title">
                     {payload.season} season · round-by-round winners
-                  </span>
+                  </h2>
                   <span className="legend mono">
                     {order.map((name) => (
                       <span key={name} className="legend__item">
@@ -256,8 +285,8 @@ export function Home() {
                 <>
                   <p className="triptych__lead">{payload.insights[0].headline}</p>
                   <p className="kpi__note">{payload.insights[0].detail}</p>
-                  <Link to="/insights" className="triptych__more">
-                    All insights →
+                  <Link to="/records" className="triptych__more">
+                    Records &amp; eras →
                   </Link>
                 </>
               ) : null
@@ -290,9 +319,9 @@ export function Home() {
       </div>
 
       <div className="panel panel--pad">
-        <div className="pane__title" style={{ marginBottom: 8 }}>
+        <h2 className="pane__title" style={{ marginBottom: 8 }}>
           What this dataset cannot tell you
-        </div>
+        </h2>
         <Async state={dataset} loadingRows={2}>
           {(summary) => (
             <>
@@ -306,11 +335,6 @@ export function Home() {
                   </Badge>
                 ))}
               </div>
-              <p style={{ fontSize: 13, marginBottom: 0, marginTop: 16 }}>
-                <Link to="/methodology" style={{ color: "var(--info)" }}>
-                  Read the full methodology →
-                </Link>
-              </p>
             </>
           )}
         </Async>

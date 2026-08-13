@@ -111,12 +111,34 @@ def test_cars_table_is_empty_not_fabricated():
     assert total == 0
 
 
-def test_no_points_or_status_columns_exist():
-    """Guards the design rule: the fact table carries only measured columns.
-    An all-NULL points column would invite zero-substitution."""
+def test_enrichment_columns_exist_and_are_populated():
+    """The design rule, restated for the columns that now have a source.
+
+    This test used to assert that `points`, `status`, `grid` and `laps` did
+    NOT exist. That was the correct guarantee while no source supplied them:
+    an all-NULL column invites zero-substitution and breaks every aggregate.
+
+    A source now supplies them (Jolpica-F1, cross-validated across all 10,550
+    rows), so the rule is not "these columns must be absent" -- it is "a column
+    that exists must be populated, not a placeholder". That is what is checked
+    here instead.
+    """
     rows, _ = repo.query("results", select="*", limit=1)
-    forbidden = {"points", "grid", "laps", "status", "fastest_lap"}
-    assert not (forbidden & set(rows[0])), "results gained a speculative column"
+    present = set(rows[0])
+    for column in ("points", "grid", "laps", "status", "classification"):
+        assert column in present, f"results lost its {column} column"
+
+    # Still forbidden: no source provides these, so they must not appear.
+    speculative = {"fastest_lap", "fastest_lap_time", "pit_stops", "tyre_compound"}
+    assert not (speculative & present), "results gained a column with no source"
+
+    # A column that exists must carry values. One NULL row would be enough to
+    # reintroduce exactly the ambiguity the original rule was protecting.
+    _, unpopulated = repo.query(
+        "results", select="id", filters={"classification": "is.null"},
+        limit=1, exact_count=True,
+    )
+    assert unpopulated == 0, f"{unpopulated} result rows have no finishing status"
 
 
 # --------------------------------------------------------------------------

@@ -4,6 +4,7 @@ import { DataTable } from "../components/DataTable";
 import { TeammateSection } from "../components/Teammates";
 import { CircuitStrengthSection, ConsistencySection } from "../components/Consistency";
 import { Async } from "../components/States";
+import { driverPhoto } from "../components/driverPhoto";
 import { dec, num, pct, seasonSpan } from "../components/format";
 import { Cell, CellGrid, PaneHead, Panel, PendingCell, SectionTitle } from "../components/ui";
 import { useApi } from "../hooks/useApi";
@@ -38,6 +39,19 @@ export function DriverDetail() {
                 <Link className="btn" to={`/compare?kind=drivers&left=${driver.id}`}>
                   Compare
                 </Link>
+                {/* Mockup § 03 puts a portrait beside the masthead. Every
+                    driver has one today; the frame is the fallback for a
+                    driver a later ETL run adds before their photo exists. */}
+                {driverPhoto(driver.name) ? (
+                  <div className="entity-head__portrait gallery__media gallery__media--portrait">
+                    <img src={driverPhoto(driver.name)!} alt="" decoding="async" width={340} height={340} />
+                  </div>
+                ) : (
+                  <div className="entity-head__portrait gallery__media mono">
+                    PORTRAIT
+                    <span>to be added</span>
+                  </div>
+                )}
               </div>
             </div>
 

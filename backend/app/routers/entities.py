@@ -84,8 +84,18 @@ def list_constructors(
     page: dict = Depends(_pagination),
     seasons: dict = Depends(_season_range),
 ):
+    # The browsable index is the one place hidden constructors are withheld.
+    # Their detail pages still resolve by id, and every aggregate still counts
+    # them -- see analytics.HIDDEN_CONSTRUCTORS.
     return analytics.leaderboard(
-        conn, "constructor", sort=sort, search=search, min_entries=min_entries, **page, **seasons
+        conn,
+        "constructor",
+        sort=sort,
+        search=search,
+        min_entries=min_entries,
+        exclude_hidden=True,
+        **page,
+        **seasons,
     )
 
 
