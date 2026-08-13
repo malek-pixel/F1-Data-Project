@@ -29,15 +29,37 @@ TIMEOUT_SECONDS = 60
 USER_AGENT = "f1-data-project/ingest"
 
 
+MAX_RETRIES = 6
+
+
 def _get(path: str, offset: int) -> dict:
-    response = requests.get(
-        f"{API}/{path}",
-        params={"limit": PAGE, "offset": offset},
-        timeout=TIMEOUT_SECONDS,
-        headers={"User-Agent": USER_AGENT},
-    )
-    response.raise_for_status()
-    return response.json()["MRData"]
+    """One API call, retrying on rate limits.
+
+    Jolpica throttles harder than its documented burst suggests -- a per-race
+    sweep hits 429 after well under a hundred requests. A 429 is not an error
+    to surface, it is a "wait" to obey, so it is retried with exponential
+    backoff and the server's own Retry-After when it sends one.
+
+    Everything else still raises: a 400 or 404 means the query is wrong, and
+    quietly retrying it would just burn the rate budget.
+    """
+    delay = 2.0
+    for attempt in range(MAX_RETRIES):
+        response = requests.get(
+            f"{API}/{path}",
+            params={"limit": PAGE, "offset": offset},
+            timeout=TIMEOUT_SECONDS,
+            headers={"User-Agent": USER_AGENT},
+        )
+        if response.status_code != 429:
+            response.raise_for_status()
+            return response.json()["MRData"]
+
+        wait = float(response.headers.get("Retry-After", delay))
+        time.sleep(wait)
+        delay = min(delay * 2, 60)
+
+    raise RuntimeError(f"rate limited after {MAX_RETRIES} attempts: {path}")
 
 
 def fetch_season_results(season: int, refresh: bool = False) -> list[dict]:
@@ -174,6 +196,49 @@ def fetch_season_qualifying(season: int, refresh: bool = False) -> list[dict]:
         time.sleep(PAUSE_SECONDS)
 
     path.write_text(json.dumps(rows, indent=1, ensure_ascii=False), encoding="utf-8")
+    return rows
+
+
+def fetch_race_pitstops(season: int, round_: int, refresh: bool = False) -> list[dict]:
+    """Pit stops for one race.
+
+    Per-race only: the API rejects a whole-season pit-stop query with 400, so
+    this is one request per race (plus paging for races with over 100 stops).
+
+    Coverage starts in 2011. Earlier seasons return zero rows -- a real absence
+    in the source, not a fetch failure, and recorded as such rather than
+    retried forever.
+    """
+    CACHE.mkdir(parents=True, exist_ok=True)
+    path = CACHE / f"jolpica_{season}_{round_}_pitstops.json"
+    if path.exists() and not refresh:
+        return json.loads(path.read_text(encoding="utf-8"))
+
+    rows: list[dict] = []
+    offset = 0
+    while True:
+        data = _get(f"{season}/{round_}/pitstops.json", offset)
+        races = data["RaceTable"]["Races"]
+        for race in races:
+            for stop in race.get("PitStops", []):
+                rows.append({
+                    "season": season,
+                    "round": round_,
+                    "driver_id": stop["driverId"],
+                    "lap": int(stop["lap"]),
+                    "stop": int(stop["stop"]),
+                    "time_of_day": stop.get("time") or "",
+                    # Absent for a few early stops; "" becomes NULL on load.
+                    "duration": stop.get("duration") or "",
+                })
+        total = int(data["total"])
+        offset += PAGE
+        if offset >= total or not races:
+            break
+        time.sleep(PAUSE_SECONDS)
+
+    path.write_text(json.dumps(rows, indent=1, ensure_ascii=False), encoding="utf-8")
+    time.sleep(PAUSE_SECONDS)
     return rows
 
 

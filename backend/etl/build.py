@@ -95,6 +95,7 @@ def load_raw(path: Path) -> list[dict[str, str]]:
 ENRICHMENT_CSV = Path(__file__).resolve().parents[2] / "data" / "jolpica_results.csv"
 SPRINT_CSV = Path(__file__).resolve().parents[2] / "data" / "jolpica_sprints.csv"
 QUALIFYING_CSV = Path(__file__).resolve().parents[2] / "data" / "jolpica_qualifying.csv"
+PITSTOPS_CSV = Path(__file__).resolve().parents[2] / "data" / "jolpica_pitstops.csv"
 
 # Columns pulled from the enrichment, in the order the INSERT expects them.
 _ENRICHMENT_FIELDS = ("classification", "position_text", "status", "points", "grid", "laps")
@@ -392,6 +393,22 @@ CREATE TABLE results (
     UNIQUE (race_id, driver_id)
 );
 
+CREATE TABLE pit_stops (
+    id          INTEGER PRIMARY KEY,
+    race_id     INTEGER NOT NULL REFERENCES races(id),
+    driver_id   INTEGER NOT NULL REFERENCES drivers(id),
+    lap         INTEGER NOT NULL,
+    stop        INTEGER NOT NULL,
+    -- Local clock time as recorded. Not a timestamp: the source gives no date
+    -- or timezone, and inventing one would be a fabrication.
+    time_of_day TEXT,
+    -- Stationary time as written ("22.213", sometimes "1:04.291"). NULL for 14
+    -- stops the source records without a duration -- never 0, which would
+    -- corrupt every average. Coverage begins in 2011.
+    duration    TEXT,
+    UNIQUE (race_id, driver_id, stop)
+);
+
 CREATE TABLE qualifying_results (
     id              INTEGER PRIMARY KEY,
     race_id         INTEGER NOT NULL REFERENCES races(id),
@@ -544,6 +561,30 @@ def load(rows: list[dict], db_path: Path, report: Report) -> None:
                     *_enrichment_values(enrichment, r),
                 )
                 for r in rows
+            ],
+        )
+
+        # Pit stops key on the source's own driver id, carried in the
+        # committed driver map -- pit-stop rows have no display name at all.
+        source_id_to_name = {
+            r["jolpica_driver_id"]: r["driver"]
+            for r in load_dimension_rows(DRIVERS_CSV) if r.get("jolpica_driver_id")
+        }
+        conn.executemany(
+            """INSERT INTO pit_stops
+                 (race_id, driver_id, lap, stop, time_of_day, duration)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            [
+                (
+                    races[(int(s["season"]), int(s["round"]))],
+                    drivers[source_id_to_name[s["driver_id"]]],
+                    int(s["lap"]), int(s["stop"]),
+                    _blank_to_none(s["time_of_day"]),
+                    _blank_to_none(s["duration"]),
+                )
+                for s in load_dimension_rows(PITSTOPS_CSV)
+                if (int(s["season"]), int(s["round"])) in races
+                and source_id_to_name.get(s["driver_id"]) in drivers
             ],
         )
 

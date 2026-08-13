@@ -196,6 +196,25 @@ _CHECKS: list[tuple[str, str, int, str, str]] = [
      " WHERE (ra.season < 2006 AND q.q3 IS NOT NULL)"
      "    OR (ra.season < 2005 AND q.q2 IS NOT NULL)", 0, FAIL,
      "no qualifying session predates the format that created it"),
+    ("pitstop_before_2011",
+     "SELECT COUNT(*) FROM pit_stops p JOIN races ra ON ra.id = p.race_id"
+     " WHERE ra.season < 2011", 0, FAIL,
+     "no pit stop is recorded before the source covers them"),
+    ("pitstop_orphan_race",
+     "SELECT COUNT(*) FROM pit_stops p LEFT JOIN races ra ON ra.id = p.race_id"
+     " WHERE ra.id IS NULL", 0, FAIL, "every pit stop points at a real race"),
+    # A zero-second stop is not a thing; the source's gaps must stay NULL.
+    ("pitstop_zero_duration",
+     "SELECT COUNT(*) FROM pit_stops WHERE duration = '0' OR duration = '0.0'", 0, FAIL,
+     "no pit stop duration was zero-filled"),
+    # Warning, not failure: the SOURCE is missing stop #1 for two drivers
+    # (Chilton, 2014 British GP; Sainz, 2019 Singapore GP). Fabricating the
+    # missing stop or renumbering the survivors would both be worse than
+    # carrying a recorded warning.
+    ("pitstop_numbering_gaps",
+     "SELECT COUNT(*) FROM (SELECT race_id, driver_id FROM pit_stops"
+     " GROUP BY race_id, driver_id HAVING MAX(stop) <> COUNT(*))", 0, WARN,
+     "drivers whose pit stop numbering skips a stop (upstream omission)"),
     ("sprint_duplicate_winner",
      "SELECT COUNT(*) FROM (SELECT race_id FROM sprint_results WHERE position = 1"
      " GROUP BY race_id HAVING COUNT(*) > 1)", 0, FAIL,
@@ -221,7 +240,7 @@ def run_checks(conn: sqlite3.Connection) -> list[Check]:
 # F1 source, and saying otherwise would be the claim the brief forbids.
 # ---------------------------------------------------------------------------
 _ABSENT = [
-    "practice", "lap_times", "pit_stops",
+    "practice", "lap_times",
     "cars", "engines", "tyres",
 ]
 
@@ -261,6 +280,8 @@ def coverage_matrix(conn: sqlite3.Connection) -> list[dict]:
          "2003-" + str(hi) + " complete; 2000-2002 partial (6-24%)", _STRUCTURAL),
         ("driver_detail",
          "SELECT COUNT(*) FROM drivers WHERE nationality IS NOT NULL", span, _VALIDATED),
+        # 2011 onward only -- the source has no pit stop data before then.
+        ("pit_stops", "SELECT COUNT(*) FROM pit_stops", "2011-" + str(hi), _STRUCTURAL),
         ("circuit_location",
          "SELECT COUNT(*) FROM circuits WHERE latitude IS NOT NULL", span, _STRUCTURAL),
     ]

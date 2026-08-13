@@ -48,7 +48,10 @@ def test_known_warnings_are_exactly_what_we_expect(report):
     A new warning is a real signal, so it must break the build and be looked
     at rather than blend into an ever-growing list of tolerated noise.
     """
-    assert {c.name for c in report.warned} == {"classification_gaps"}
+    assert {c.name for c in report.warned} == {
+        "classification_gaps",
+        "pitstop_numbering_gaps",
+    }
 
 
 def test_coverage_never_reports_absent_data_as_zero(report):
@@ -347,5 +350,75 @@ def test_absent_driver_detail_is_null_not_blank():
             "SELECT COUNT(*) FROM drivers WHERE abbreviation IS NULL"
         ).fetchone()[0]
         assert missing > 0, "every driver has a code, which the source does not support"
+    finally:
+        conn.close()
+
+
+# ---------------------------------------------------------------- pit stops
+
+
+def test_pit_stop_coverage_starts_in_2011_and_says_so():
+    """2000-2010 have no pit stop data. That absence is real, not a bug."""
+    conn = connect()
+    try:
+        earliest, latest = conn.execute(
+            "SELECT MIN(ra.season), MAX(ra.season) FROM pit_stops p"
+            " JOIN races ra ON ra.id = p.race_id"
+        ).fetchone()
+        assert earliest == 2011, f"pit stops now start at {earliest}, expected 2011"
+        assert latest >= 2025
+        pre = conn.execute(
+            "SELECT COUNT(*) FROM pit_stops p JOIN races ra ON ra.id = p.race_id"
+            " WHERE ra.season < 2011"
+        ).fetchone()[0]
+        assert pre == 0
+    finally:
+        conn.close()
+
+
+def test_missing_pit_stop_duration_is_null_not_zero():
+    """14 stops are recorded without a duration.
+
+    A zero-second pit stop is not a thing. Storing 0 would drag every average
+    down and silently turn "not recorded" into a measurement.
+    """
+    conn = connect()
+    try:
+        zeros = conn.execute(
+            "SELECT COUNT(*) FROM pit_stops WHERE duration IN ('0', '0.0', '')"
+        ).fetchone()[0]
+        assert zeros == 0, "pit stop durations were zero-filled"
+        nulls = conn.execute(
+            "SELECT COUNT(*) FROM pit_stops WHERE duration IS NULL"
+        ).fetchone()[0]
+        assert nulls == 14, f"{nulls} null durations, expected 14 -- verify the source"
+    finally:
+        conn.close()
+
+
+def test_pit_stop_numbering_gaps_are_exactly_the_known_source_omissions():
+    """Two drivers are missing stop #1 -- in the SOURCE, not in the load.
+
+    Chilton at the 2014 British GP has stops [2, 3]; Sainz at the 2019
+    Singapore GP has [2]. Verified against data/jolpica_pitstops.csv, so this
+    is an upstream omission and not a lost row.
+
+    Renumbering them to look tidy would invent a first stop that the record
+    does not contain, so the gap is carried and pinned. A THIRD case appearing
+    means something changed and needs looking at.
+    """
+    conn = connect()
+    try:
+        gaps = conn.execute(
+            "SELECT d.name, ra.season FROM pit_stops p"
+            " JOIN drivers d ON d.id = p.driver_id"
+            " JOIN races ra ON ra.id = p.race_id"
+            " GROUP BY p.race_id, p.driver_id"
+            " HAVING MAX(p.stop) <> COUNT(*)"
+        ).fetchall()
+        assert {(name, season) for name, season in gaps} == {
+            ("Max Chilton", 2014),
+            ("Carlos Sainz", 2019),
+        }, f"pit stop numbering gaps changed: {gaps}"
     finally:
         conn.close()

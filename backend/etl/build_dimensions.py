@@ -61,6 +61,11 @@ def build_drivers(rows: list[dict]) -> list[dict]:
     out = [
         {
             "driver": name,
+            # The source's own stable id. Committed here because pit stops
+            # (and any future per-driver endpoint) key on it, and resolving it
+            # from the network cache at load time would make ingestion depend
+            # on a cache that is deliberately not tracked.
+            "jolpica_driver_id": row["driver_id"] or "",
             "nationality": row["driver_nationality"] or "",
             "date_of_birth": row["driver_dob"] or "",
             # Absent for drivers who raced before three-letter codes and
@@ -154,7 +159,8 @@ def main() -> int:
     rows = fetch_all(SEASONS, progress=False)
 
     _write(DATA / "jolpica_drivers.csv", build_drivers(rows),
-           ["driver", "nationality", "date_of_birth", "abbreviation", "permanent_number"])
+           ["driver", "jolpica_driver_id", "nationality", "date_of_birth",
+            "abbreviation", "permanent_number"])
     _write(DATA / "jolpica_constructors.csv", build_constructors(rows),
            ["constructor", "nationality"])
 

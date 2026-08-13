@@ -59,6 +59,8 @@ CONSTRUCTORS_CSV = REPO_ROOT / "data" / "jolpica_constructors.csv"
 CIRCUITS_CSV = REPO_ROOT / "data" / "jolpica_circuits.csv"
 # Qualifying. Coverage is partial before 2003 -- see migration 12.
 QUALIFYING_CSV = REPO_ROOT / "data" / "jolpica_qualifying.csv"
+# Pit stops. Source coverage begins in 2011 -- see migration 14.
+PITSTOPS_CSV = REPO_ROOT / "data" / "jolpica_pitstops.csv"
 CIRCUIT_ASSET_DIR = REPO_ROOT / "frontend" / "public" / "circuits"
 
 DATASET_KEY = "ergast_results"
@@ -427,6 +429,96 @@ def promote_enrichment(conn, report: Report) -> None:
             "winners are classified and scored", "pass" if bad_winners == 0 else "fail",
             "info" if bad_winners == 0 else "fatal", bad_winners,
             "race winners with a non-classified status, no points or no laps",
+        )
+
+
+def promote_pit_stops(conn, report: Report, dataset_id: int) -> None:
+    """Load pit stops, 2011 onward.
+
+    Keyed on the source's own `driverId`, resolved through the committed map in
+    jolpica_drivers.csv rather than by name -- pit-stop rows carry no display
+    name, so a name join is not even available here.
+
+    Coverage before 2011 is zero and that is correct, so no count check against
+    `results` is made. What is checked is that every row in the file landed.
+    """
+    if not PITSTOPS_CSV.exists() or not DRIVERS_CSV.exists():
+        report.check("pit stop source", "warn", "warning", 0,
+                     "jolpica_pitstops.csv or jolpica_drivers.csv missing")
+        return
+
+    with DRIVERS_CSV.open(newline="", encoding="utf-8") as handle:
+        by_source_id = {
+            r["jolpica_driver_id"]: r["driver"]
+            for r in csv.DictReader(handle)
+            if r.get("jolpica_driver_id")
+        }
+
+    with PITSTOPS_CSV.open(newline="", encoding="utf-8") as handle:
+        rows = list(csv.DictReader(handle))
+    report.counts["pit stop source rows"] = len(rows)
+
+    unresolved = sorted({r["driver_id"] for r in rows if r["driver_id"] not in by_source_id})
+    if unresolved:
+        # Refuse rather than drop: a driver id with no mapping means the
+        # dimension and the fact table disagree about who exists.
+        report.check("pit stop drivers resolve", "fail", "fatal", len(unresolved),
+                     f"unmapped source driver ids: {', '.join(unresolved[:5])}")
+        return
+
+    payload = [
+        (
+            int(r["lap"]), int(r["stop"]),
+            (r["time_of_day"] or "").strip() or None,
+            # NULL, never 0: a zero-second stop is not a thing.
+            (r["duration"] or "").strip() or None,
+            dataset_id,
+            int(r["season"]), int(r["round"]), by_source_id[r["driver_id"]],
+        )
+        for r in rows
+    ]
+
+    with conn.cursor() as cur:
+        cur.executemany(
+            """
+            INSERT INTO pit_stops
+                (race_id, driver_id, lap, stop, time_of_day, duration, dataset_id)
+            SELECT ra.id, d.id, %s, %s, %s, %s, %s
+            FROM races ra
+            JOIN seasons s ON s.id = ra.season_id AND s.year = %s
+            JOIN drivers d ON d.display_name = %s
+            WHERE ra.round = %s
+            ON CONFLICT (race_id, driver_id, stop) DO UPDATE
+              SET lap = excluded.lap, time_of_day = excluded.time_of_day,
+                  duration = excluded.duration, updated_at = now()
+            """,
+            # Placeholder order in the SQL, not column order.
+            [(lap, stop, tod, dur, ds, season, driver, rnd)
+             for lap, stop, tod, dur, ds, season, rnd, driver in payload],
+        )
+
+        cur.execute("SELECT count(*) FROM pit_stops")
+        loaded = cur.fetchone()[0]
+        report.counts["pit_stops in database"] = loaded
+        report.check(
+            "every pit stop row loaded",
+            "pass" if loaded == len(rows) else "fail",
+            "info" if loaded == len(rows) else "fatal",
+            len(rows) - loaded,
+            "pit stop rows whose race or driver did not resolve",
+        )
+
+        cur.execute(
+            "SELECT count(*) FROM pit_stops p"
+            " JOIN races ra ON ra.id = p.race_id"
+            " JOIN seasons s ON s.id = ra.season_id"
+            " WHERE s.year < 2011"
+        )
+        early = cur.fetchone()[0]
+        report.check(
+            "no pit stops before 2011", "pass" if early == 0 else "fail",
+            "info" if early == 0 else "fatal", early,
+            "pit stops recorded for seasons the source does not cover",
         )
 
 
@@ -832,6 +924,7 @@ def main() -> int:
             promote_sprints(conn, report, dataset_id)
             promote_dimensions(conn, report)
             promote_qualifying(conn, report, dataset_id)
+            promote_pit_stops(conn, report, dataset_id)
             reconcile(conn, report)
             persist_report(conn, report)
 
