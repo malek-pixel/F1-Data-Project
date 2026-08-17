@@ -70,7 +70,7 @@ describe("Unavailable", () => {
 
   it("lists every unsupported metric explicitly", () => {
     render(<UnavailableMetrics />);
-    for (const label of ["FASTEST LAPS", "LAP TIMES", "TYRE COMPOUND", "CAR / ENGINE SPEC"]) {
+    for (const label of ["FASTEST-LAP AWARDS", "SECTOR TIMES", "TYRE COMPOUND", "CAR / ENGINE SPEC"]) {
       expect(screen.getByText(label)).toBeInTheDocument();
     }
     expect(screen.getAllByText("Not available in dataset")).toHaveLength(4);

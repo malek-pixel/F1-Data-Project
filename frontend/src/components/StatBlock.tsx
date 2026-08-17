@@ -85,8 +85,13 @@ export function UnavailableMetrics() {
         </span>
       </div>
       <div className="grid grid--kpi">
-        <Unavailable label="FASTEST LAPS" why="No source records the fastest lap of a race." />
-        <Unavailable label="LAP TIMES" why="Ingestion is per-race and still in progress." />
+        {/* The AWARD, not the measurement. No source publishes who received
+            the fastest-lap point, and since 2019 it has eligibility rules. The
+            quickest lap actually driven IS derived from the timings and shown
+            on each race page, labelled "quickest lap" to keep the two
+            distinct. */}
+        <Unavailable label="FASTEST-LAP AWARDS" why="No source records who received the point." />
+        <Unavailable label="SECTOR TIMES" why="No source supplies sector splits." />
         <Unavailable label="TYRE COMPOUND" why="No source supplies tyre data." />
         <Unavailable label="CAR / ENGINE SPEC" why="No source supplies chassis or engine detail." />
       </div>

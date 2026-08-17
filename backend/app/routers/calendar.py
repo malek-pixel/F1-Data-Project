@@ -124,6 +124,7 @@ def get_race(race_id: int, conn: sqlite3.Connection = Depends(get_db)):
     qualifying = analytics.qualifying_results(conn, race_id)
     sprint = analytics.sprint_results(conn, race_id)
     stops = analytics.pit_stops(conn, race_id)
+    quickest = analytics.fastest_lap(conn, race_id)
 
     return {
         **dict(row),
@@ -147,6 +148,20 @@ def get_race(race_id: int, conn: sqlite3.Connection = Depends(get_db)):
             "unavailable_reason": None if stops else
                 "Pit stop data begins in 2011; none is recorded for this race.",
             "items": stops,
+        },
+        "fastest_lap": {
+            "available": quickest is not None,
+            # Absent means the lap timings for this race have not been
+            # ingested -- the fetch is per race and resumable -- never that
+            # nobody set a lap.
+            "unavailable_reason": None if quickest else
+                "Lap timings have not been ingested for this race.",
+            # Named for what it is. This is the quickest lap driven, derived
+            # from the timings; it is NOT the official fastest-lap award,
+            # which no source publishes and which has eligibility rules this
+            # does not apply.
+            "basis": "minimum lap time recorded; not the official award",
+            "item": quickest,
         },
     }
 

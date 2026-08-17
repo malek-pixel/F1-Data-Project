@@ -41,8 +41,15 @@ driver contribution (within a constructor)
 --------------------------------------------------------------------------
 ABSENT -- no source supplies these
 --------------------------------------------------------------------------
-    fastest laps, sector times, tyre compounds, telemetry, car and engine
-    specifications, practice classifications.
+    sector times, tyre compounds, telemetry, car and engine specifications,
+    practice classifications.
+
+    The official FASTEST LAP AWARD is also absent: no source publishes which
+    driver received it, and since 2019 it carries eligibility rules (a
+    classified finish, and a top-ten position for the point). What IS
+    available, where lap timings have been ingested, is the quickest lap
+    anyone actually drove -- see `fastest_lap`. The two can disagree, so they
+    are never presented as the same thing.
 
 Adding any of these requires a new source first. They are never estimated or
 inferred, and `/api/dataset/summary` reports availability by counting rows so
@@ -574,6 +581,41 @@ def sprint_results(conn: sqlite3.Connection, race_id: int) -> list[dict]:
         [race_id],
     ).fetchall()
     return [dict(row) for row in rows]
+
+
+def fastest_lap(conn: sqlite3.Connection, race_id: int) -> dict | None:
+    """The quickest lap of a race, derived from the lap timings.
+
+    DERIVED, NOT RECORDED
+    ---------------------
+    No source in this project publishes a "fastest lap" field. This is
+    computed: the minimum `time_ms` across every timing of the race. That is a
+    different provenance from the official fastest-lap award and is labelled
+    as such wherever it surfaces, because the two can disagree -- the award
+    has eligibility rules (a classified finish, and since 2019 a top-ten
+    position for the point) that a raw minimum does not apply.
+
+    So this answers "what was the quickest lap anyone drove", which is a
+    statement about the data. It does not claim to be the driver who received
+    the point.
+
+    None when the race has no lap timings. Coverage is per race and the
+    ingestion is resumable, so that means "not ingested for this race", never
+    "nobody set a lap".
+    """
+    row = conn.execute(
+        """
+        SELECT l.lap, l.time_text, l.time_ms,
+               d.id AS driver_id, d.slug AS driver_slug, d.name AS driver_name
+        FROM lap_times l
+        JOIN drivers d ON d.id = l.driver_id
+        WHERE l.race_id = ? AND l.time_ms IS NOT NULL
+        ORDER BY l.time_ms
+        LIMIT 1
+        """,
+        [race_id],
+    ).fetchone()
+    return dict(row) if row else None
 
 
 def pit_stops(conn: sqlite3.Connection, race_id: int) -> list[dict]:

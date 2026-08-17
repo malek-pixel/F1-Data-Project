@@ -641,7 +641,18 @@ export function RaceDetail() {
                   value={num(race.results.filter((r) => r.classification && r.classification !== "classified").length)}
                   note="Did not reach a classified finish"
                 />
-                <PendingCell label="FASTEST LAP" why="No source records the fastest lap of a race" />
+                {race.fastest_lap.available && race.fastest_lap.item ? (
+                  <Cell
+                    label="QUICKEST LAP"
+                    value={race.fastest_lap.item.time_text}
+                    /* Labelled "quickest lap", not "fastest lap": this is the
+                       minimum recorded time, not the official award, which no
+                       source publishes and which has eligibility rules. */
+                    note={`${race.fastest_lap.item.driver_name} · lap ${race.fastest_lap.item.lap}`}
+                  />
+                ) : (
+                  <PendingCell label="QUICKEST LAP" why={race.fastest_lap.unavailable_reason ?? "No lap timings for this race"} />
+                )}
                 <PendingCell label="TYRE STRATEGY" why="No source supplies tyre compounds" />
               </CellGrid>
             </div>

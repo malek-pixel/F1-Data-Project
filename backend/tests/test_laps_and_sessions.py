@@ -236,3 +236,70 @@ def test_session_dates_fall_on_or_before_their_race(conn):
         """
     ).fetchall()
     assert not wrong, f"session after its race: {[tuple(r) for r in wrong]}"
+
+
+# ---------------------------------------------------------------------------
+# Fastest lap, derived
+# ---------------------------------------------------------------------------
+
+def test_fastest_lap_is_the_minimum_recorded_time(conn):
+    """The derivation must actually be the minimum, per race.
+
+    Worth checking rather than assuming: an ORDER BY on `time_text` instead of
+    `time_ms` would sort "1:09.123" after "1:31.481" as text and return a
+    slower lap, which looks entirely plausible in the UI.
+    """
+    from backend.app.analytics import fastest_lap
+
+    race = conn.execute(
+        "SELECT race_id FROM lap_times GROUP BY race_id HAVING COUNT(*) > 100 LIMIT 1"
+    ).fetchone()
+    if race is None:
+        pytest.skip("no race has lap timings loaded yet")
+
+    derived = fastest_lap(conn, race["race_id"])
+    assert derived is not None
+
+    expected = conn.execute(
+        "SELECT MIN(time_ms) FROM lap_times WHERE race_id = ? AND time_ms IS NOT NULL",
+        [race["race_id"]],
+    ).fetchone()[0]
+    assert derived["time_ms"] == expected
+
+
+def test_fastest_lap_is_none_for_a_race_without_timings(conn):
+    """Absent means "not ingested", and must not be faked as a zero or a guess."""
+    from backend.app.analytics import fastest_lap
+
+    race = conn.execute(
+        """
+        SELECT id FROM races
+        WHERE id NOT IN (SELECT DISTINCT race_id FROM lap_times)
+        LIMIT 1
+        """
+    ).fetchone()
+    if race is None:
+        pytest.skip("every race has lap timings; nothing to check")
+    assert fastest_lap(conn, race["id"]) is None
+
+
+def test_derived_fastest_lap_is_never_labelled_the_official_award(conn):
+    """The payload must say what it measured.
+
+    The official award has eligibility rules -- a classified finish, and since
+    2019 a top-ten position for the point -- that a raw minimum does not
+    apply, so the two can name different drivers. Presenting the measurement
+    under the award's name would be a claim the data cannot support.
+    """
+    from fastapi.testclient import TestClient
+
+    from backend.app.main import app
+
+    with TestClient(app) as client:
+        race = conn.execute("SELECT race_id FROM lap_times LIMIT 1").fetchone()
+        if race is None:
+            pytest.skip("no lap timings loaded yet")
+        block = client.get(f"/api/races/{race['race_id']}").json()["fastest_lap"]
+
+    assert block["available"] is True
+    assert "not the official award" in block["basis"]

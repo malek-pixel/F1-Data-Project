@@ -214,6 +214,7 @@ export interface RaceDetail extends Race {
   qualifying: SessionBlock<QualifyingResult>;
   sprint: SessionBlock<SprintResult>;
   pit_stops: SessionBlock<PitStop>;
+  fastest_lap: FastestLapSection;
 }
 
 export interface DriverDetail {
@@ -466,4 +467,30 @@ export interface Era {
   constructors: number;
   largest_field: number;
   top_winners: { name: string; wins: number }[];
+}
+
+
+/** The quickest lap driven in a race, derived from the lap timings.
+ *
+ *  NOT the official fastest-lap award: no source publishes who received it,
+ *  and since 2019 it carries eligibility rules (a classified finish, and a
+ *  top-ten position for the point) that a raw minimum does not apply. The two
+ *  can disagree, so they are never labelled the same.
+ *
+ *  `available: false` means lap timings have not been ingested for that race
+ *  — the fetch is per race and resumable — never that nobody set a lap. */
+export interface FastestLap {
+  lap: number;
+  time_text: string;
+  time_ms: number;
+  driver_id: number;
+  driver_slug: string;
+  driver_name: string;
+}
+
+export interface FastestLapSection {
+  available: boolean;
+  unavailable_reason: string | null;
+  basis: string;
+  item: FastestLap | null;
 }
