@@ -580,3 +580,195 @@ def leaderboard_page(
             for row in rows
         ],
     }
+
+
+# ---------------------------------------------------------------------------
+# The last eight endpoints.
+#
+# These had no Postgres implementation, and the stated reason was sound: each
+# was a metric defined only in analytics.py, so writing a view would have
+# defined the same number twice.
+#
+# Migration 19 resolves that by MOVING the definitions rather than copying
+# them. The aggregate now lives in the database; these functions select from
+# it and reshape, exactly as every other function in this module does.
+# ---------------------------------------------------------------------------
+
+def search(term: str, limit: int = 8) -> list[dict]:
+    """Cross-entity search, ranked the way the SQLite implementation ranks.
+
+    PostgREST cannot join across tables in one request, which is why this had
+    no implementation. `v_search_index` is one row per findable entity, so
+    there is nothing left to join.
+
+    Ranking happens here rather than in the view: prefix matches first, then
+    by wins. That ordering depends on the search term, so it cannot be baked
+    into a view -- and doing it in Python keeps it identical to the other
+    backend rather than approximately similar.
+    """
+    text = (term or "").strip()
+    if not text:
+        return []
+
+    # PostgREST's ilike wildcard is `*`, and `query` URL-encodes the value, so
+    # no caller text reaches a SQL string.
+    rows, _ = query("v_search_index", filters={"label": f"ilike.*{text}*"}, limit=200)
+
+    lowered = text.lower()
+
+    def rank(row: dict) -> tuple:
+        position = row["search_key"].find(lowered)
+        return (position if position >= 0 else 999, -(row["wins"] or 0))
+
+    return [
+        {
+            "kind": row["kind"],
+            "id": row["id"],
+            "slug": row["slug"],
+            "label": row["label"],
+            "sublabel": "" if row["kind"] == "circuit" else f"{row['wins'] or 0} wins",
+        }
+        for row in sorted(rows, key=rank)[:limit]
+    ]
+
+
+def season_dominance(season_year: int) -> dict | None:
+    """How concentrated one season was.
+
+    win_share and points_share are NOT comparable with each other -- every
+    scoring finisher dilutes points_share, so it is bounded far below 1.0
+    however dominant the leader was. Both are returned; neither is a
+    refinement of the other.
+    """
+    row = _one("v_season_dominance", {"season": f"eq.{season_year}"})
+    if row is None:
+        return None
+    return {
+        "season": row["season"],
+        "races": row["races"],
+        "distinct_driver_winners": row["distinct_driver_winners"],
+        "top_driver_win_share": _number(row["top_driver_win_share"]),
+        "top_driver_points_share": _number(row["top_driver_points_share"]),
+    }
+
+
+def era_summary() -> list[dict]:
+    """Decade-level aggregates, with each decade's leading winners attached.
+
+    Two queries rather than one: the top-three winners are a per-decade list,
+    and PostgREST returns rows, not nested arrays. They are joined here so the
+    payload matches the SQLite shape.
+    """
+    eras, _ = query("v_era_summary", order="decade")
+    winners, _ = query("v_era_top_winners", order="decade,wins.desc")
+
+    by_decade: dict[int, list[dict]] = {}
+    for winner in winners:
+        by_decade.setdefault(winner["decade"], []).append(
+            {"name": winner["name"], "slug": winner["slug"], "wins": winner["wins"]}
+        )
+
+    return [
+        {
+            "decade": era["decade"],
+            "label": era["label"],
+            "seasons": era["seasons"],
+            "races": era["races"],
+            "drivers": era["drivers"],
+            "constructors": era["constructors"],
+            "largest_field": era["largest_field"],
+            "top_winners": by_decade.get(era["decade"], []),
+        }
+        for era in eras
+    ]
+
+
+# Bucket LABELS are presentation and are safe to state here; the counts come
+# from the view. The boundaries match advanced.distribution exactly.
+_DISTRIBUTION_BUCKETS = (
+    ("P1", "p1"),
+    ("P2-P3", "p2_p3"),
+    ("P4-P5", "p4_p5"),
+    ("P6-P10", "p6_p10"),
+    ("P11-P15", "p11_p15"),
+    ("P16+", "p16_plus"),
+)
+
+
+def distribution(slug: str) -> dict:
+    """Shape of a driver's finishing distribution.
+
+    Median is nearest-rank, not interpolated: positions are ordinal, and an
+    interpolated "position 7.5" is not a result anyone can finish in. Spread
+    and IQR are NULL below five entries rather than computed, so a two-race
+    driver does not get a confident-looking variance.
+    """
+    row = _one("v_driver_position_distribution", {"driver_slug": f"eq.{slug}"})
+    if row is None or not row["entries"]:
+        return {
+            "entries": 0, "median": None, "stdev": None, "spread_reliable": False,
+            "iqr": None, "worst": None, "histogram": [],
+        }
+
+    entries = row["entries"]
+    return {
+        "entries": entries,
+        "median": _number(row["median"]),
+        "stdev": _number(row["stdev"]),
+        "spread_reliable": row["spread_reliable"],
+        "iqr": _number(row["iqr"]),
+        "worst": row["worst"],
+        "histogram": [
+            {"bucket": label, "count": row[column], "share": row[column] / entries}
+            for label, column in _DISTRIBUTION_BUCKETS
+        ],
+    }
+
+
+def compare(entity: str, left_slug: str, right_slug: str) -> dict:
+    """Two entities side by side, plus the seasons they actually overlapped.
+
+    `comparable` is False when they never raced in the same season. The stat
+    blocks are still returned: withholding them would be less useful than
+    showing them with the caveat attached.
+    """
+    fetch = driver_by_slug if entity == "driver" else constructor_by_slug
+    left, right = fetch(left_slug), fetch(right_slug)
+    if left is None or right is None:
+        missing = left_slug if left is None else right_slug
+        raise SupabaseError(f"unknown {entity}: {missing}")
+
+    key = "driver_slug" if entity == "driver" else "constructor_slug"
+    resource = "v_driver_season_stats" if entity == "driver" else "v_constructor_season_stats"
+    left_seasons, _ = query(resource, select="season", filters={key: f"eq.{left_slug}"})
+    right_seasons, _ = query(resource, select="season", filters={key: f"eq.{right_slug}"})
+
+    shared = sorted({r["season"] for r in left_seasons} & {r["season"] for r in right_seasons})
+    return {
+        "left": _stat_block(left),
+        "right": _stat_block(right),
+        "shared_seasons": shared,
+        "comparable": bool(shared),
+    }
+
+
+def cars() -> list[dict]:
+    """Car specifications.
+
+    Empty in both stores, and that is the honest answer rather than an
+    omission: no source this project ingests supplies chassis or engine
+    detail. The table exists so the absence is visible and countable.
+    """
+    rows, _ = query("cars")
+    return rows
+
+
+def dataset_availability() -> dict[str, int]:
+    """Row count per dataset, read from the database.
+
+    Counted, never listed. A hand-maintained record of what is missing becomes
+    wrong the moment something is ingested, which has happened to this project
+    more than once.
+    """
+    rows, _ = query("v_dataset_availability")
+    return {row["dataset"]: row["rows_present"] for row in rows}

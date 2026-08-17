@@ -53,18 +53,21 @@ def test_sqlite_supports_every_endpoint(monkeypatch):
 def test_supabase_reports_only_what_it_implements(monkeypatch):
     monkeypatch.setenv("F1_BACKEND", "supabase")
     assert backends.supports("driver_career_stats")
-    # Implemented for SQLite only, and deliberately so: `search` spans several
-    # tables in one query, which PostgREST cannot express, and reproducing it
-    # as a view would define the same thing twice. See
-    # backends.UNIMPLEMENTED_ON_SUPABASE for the full list and the reasons.
-    assert not backends.supports("search")
+    # `insights` is the one endpoint with no Supabase implementation, and
+    # deliberately so: it is a narrative composed in Python from aggregates
+    # that ARE all available on Supabase. Only the assembly and phrasing are
+    # Python, and those are presentation rather than a metric.
+    #
+    # `search` used to be the example here. It is supported now -- migration
+    # 19 moved its definition into the database.
+    assert not backends.supports("insights")
 
 
 def test_unsupported_endpoint_raises_rather_than_falling_back(monkeypatch):
     """No silent fallback. This is the whole design of the module."""
     monkeypatch.setenv("F1_BACKEND", "supabase")
     with pytest.raises(backends.CapabilityMissing):
-        backends.require("search")
+        backends.require("insights")
 
 
 def test_capability_set_is_not_aspirational():

@@ -15,6 +15,7 @@ import sqlite3
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from .. import advanced, analytics
+from .. import backends, supabase_repo
 from ..db import fetch_one_or_404, get_db
 
 router = APIRouter()
@@ -45,7 +46,7 @@ def list_metrics():
 
 @router.get("/drivers/{driver_id}/distribution", tags=["drivers"])
 def driver_distribution(
-    driver_id: int,
+    driver_id: str,
     conn: sqlite3.Connection = Depends(get_db),
     season: int | None = Query(None, ge=1950, le=2100),
 ):
@@ -54,12 +55,21 @@ def driver_distribution(
     The mean alone cannot distinguish a driver who is reliably 5th from one
     alternating podiums with retirements. These do.
     """
-    fetch_one_or_404(conn, "drivers", driver_id)
-    return advanced.distribution(conn, driver_id=driver_id, season=season)
+    row = fetch_one_or_404(conn, "drivers", driver_id)
+    if season is not None:
+        # The view aggregates a whole career; a season filter is not
+        # expressible against it without a second view. Served from SQLite and
+        # not claimed as Supabase-backed.
+        return advanced.distribution(conn, driver_id=row["id"], season=season)
+    return backends.serve(
+        "distribution",
+        lambda: advanced.distribution(conn, driver_id=row["id"]),
+        lambda: supabase_repo.distribution(row["slug"]),
+    )
 
 
 @router.get("/drivers/{driver_id}/qualifying", tags=["drivers"])
-def driver_qualifying(driver_id: int, conn: sqlite3.Connection = Depends(get_db)):
+def driver_qualifying(driver_id: str, conn: sqlite3.Connection = Depends(get_db)):
     """Career qualifying record.
 
     `qualifying_p1` counts fastest-qualifier classifications. It is NOT a pole
@@ -67,8 +77,8 @@ def driver_qualifying(driver_id: int, conn: sqlite3.Connection = Depends(get_db)
     (2021 awarded pole to the sprint winner) and one case remains unexplained.
     The field name says exactly what was counted.
     """
-    fetch_one_or_404(conn, "drivers", driver_id)
-    stats = analytics.driver_qualifying_stats(conn, driver_id)
+    row = fetch_one_or_404(conn, "drivers", driver_id)
+    stats = analytics.driver_qualifying_stats(conn, row["id"])
     since = stats.get("coverage_from")
     return {
         **stats,
@@ -86,31 +96,31 @@ def driver_qualifying(driver_id: int, conn: sqlite3.Connection = Depends(get_db)
 
 
 @router.get("/drivers/{driver_id}/teammates", tags=["drivers"])
-def driver_teammates(driver_id: int, conn: sqlite3.Connection = Depends(get_db)):
+def driver_teammates(driver_id: str, conn: sqlite3.Connection = Depends(get_db)):
     """Head-to-head against every teammate, grouped by constructor spell.
 
     Only races where both drivers started for the same constructor are
     counted, which removes the distortion from unequal season lengths and
     mid-season replacements.
     """
-    fetch_one_or_404(conn, "drivers", driver_id)
+    row = fetch_one_or_404(conn, "drivers", driver_id)
     return {
-        "summary": advanced.teammate_summary(conn, driver_id),
-        "spells": advanced.teammate_records(conn, driver_id),
+        "summary": advanced.teammate_summary(conn, row["id"]),
+        "spells": advanced.teammate_records(conn, row["id"]),
         "methodology": advanced.METRICS_BY_KEY["teammate_h2h"],
     }
 
 
 @router.get("/drivers/{driver_id}/circuits", tags=["drivers"])
 def driver_circuits(
-    driver_id: int,
+    driver_id: str,
     conn: sqlite3.Connection = Depends(get_db),
     min_appearances: int = Query(advanced.MIN_APPEARANCES_FOR_SPECIALISM, ge=1, le=30),
 ):
     """Per-circuit record, each compared against the driver's own career average."""
-    fetch_one_or_404(conn, "drivers", driver_id)
+    row = fetch_one_or_404(conn, "drivers", driver_id)
     return {
-        "circuits": advanced.circuit_profile(conn, driver_id, min_appearances),
+        "circuits": advanced.circuit_profile(conn, row["id"], min_appearances),
         "min_appearances": min_appearances,
         "methodology": advanced.METRICS_BY_KEY["circuit_specialism"],
     }
@@ -122,12 +132,12 @@ def driver_circuits(
 
 @router.get("/constructors/{constructor_id}/distribution", tags=["constructors"])
 def constructor_distribution(
-    constructor_id: int,
+    constructor_id: str,
     conn: sqlite3.Connection = Depends(get_db),
     season: int | None = Query(None, ge=1950, le=2100),
 ):
-    fetch_one_or_404(conn, "constructors", constructor_id)
-    return advanced.distribution(conn, constructor_id=constructor_id, season=season)
+    row = fetch_one_or_404(conn, "constructors", constructor_id)
+    return advanced.distribution(conn, constructor_id=row["id"], season=season)
 
 
 # --------------------------------------------------------------------------
@@ -136,7 +146,7 @@ def constructor_distribution(
 
 @router.get("/circuits/{circuit_id}/specialists", tags=["circuits"])
 def circuit_specialists(
-    circuit_id: int,
+    circuit_id: str,
     conn: sqlite3.Connection = Depends(get_db),
     min_appearances: int = Query(advanced.MIN_APPEARANCES_FOR_SPECIALISM, ge=1, le=30),
 ):
@@ -146,9 +156,9 @@ def circuit_specialists(
     reliably over-delivered is not buried beneath front-runners who were
     quick everywhere.
     """
-    fetch_one_or_404(conn, "circuits", circuit_id)
+    row = fetch_one_or_404(conn, "circuits", circuit_id)
     return {
-        "specialists": advanced.circuit_specialists(conn, circuit_id, min_appearances),
+        "specialists": advanced.circuit_specialists(conn, row["id"], min_appearances),
         "min_appearances": min_appearances,
         "methodology": advanced.METRICS_BY_KEY["circuit_specialism"],
     }
@@ -161,7 +171,11 @@ def circuit_specialists(
 @router.get("/seasons/{season}/dominance", tags=["seasons"])
 def season_dominance(season: int, conn: sqlite3.Connection = Depends(get_db)):
     """How concentrated a season's wins were, normalised by races held."""
-    result = advanced.season_dominance(conn, season)
+    result = backends.serve(
+        "season_dominance",
+        lambda: advanced.season_dominance(conn, season),
+        lambda: supabase_repo.season_dominance(season),
+    )
     if result is None:
         raise HTTPException(status_code=404, detail=f"No races recorded for season {season}")
     return result
@@ -185,7 +199,11 @@ def eras(conn: sqlite3.Connection = Depends(get_db)):
     size all changed across these boundaries.
     """
     return {
-        "eras": advanced.era_summary(conn),
+        "eras": backends.serve(
+            "era_summary",
+            lambda: advanced.era_summary(conn),
+            supabase_repo.era_summary,
+        ),
         "caveat": (
             "Decades are presented as periods, not as a ranking. Regulations, calendar length, "
             "field size and scoring systems all changed across these boundaries, so totals are not "

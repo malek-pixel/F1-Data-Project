@@ -1205,6 +1205,48 @@ _INSIGHT_GENERATORS = (
 )
 
 
+def cars(conn: sqlite3.Connection) -> list[dict]:
+    """Car specifications.
+
+    Always empty: no source this project ingests supplies chassis or engine
+    detail, and SQLite has no `cars` table at all because there is nothing to
+    put in one. Returning [] here rather than raising keeps the two backends
+    answering the same shape, and keeps the absence countable instead of
+    special-cased at the call site.
+    """
+    return []
+
+
+def dataset_availability(conn: sqlite3.Connection) -> dict[str, int]:
+    """Row count per dataset, COUNTED from the database.
+
+    Never a written-down list. A hand-maintained record of what is missing
+    becomes wrong the moment something is ingested, which is exactly what
+    happened to this project's absence claims more than once -- points,
+    status, grid, qualifying and pit stops were all still described as absent
+    long after they were loaded.
+
+    Mirrors `v_dataset_availability` so both backends answer identically.
+    """
+    counts = {
+        "race_results": "SELECT COUNT(*) FROM results",
+        "championship_points": "SELECT COUNT(*) FROM results WHERE points IS NOT NULL",
+        "finishing_status": "SELECT COUNT(*) FROM results WHERE status IS NOT NULL",
+        "grid_positions": "SELECT COUNT(*) FROM results WHERE grid IS NOT NULL",
+        "laps_completed": "SELECT COUNT(*) FROM results WHERE laps IS NOT NULL",
+        "qualifying": "SELECT COUNT(*) FROM qualifying_results",
+        "sprints": "SELECT COUNT(*) FROM sprint_results",
+        "pit_stops": "SELECT COUNT(*) FROM pit_stops",
+        "lap_times": "SELECT COUNT(*) FROM lap_times",
+        "sessions": "SELECT COUNT(*) FROM sessions",
+    }
+    available = {name: conn.execute(sql).fetchone()[0] for name, sql in counts.items()}
+    # No `cars` table exists here; the count is 0 by construction, and stating
+    # it keeps the two backends' payloads identical.
+    available["cars"] = 0
+    return available
+
+
 def dataset_summary(conn: sqlite3.Connection) -> dict:
     """Powers the Dataset Explorer. Schema shape and coverage only -- no
     filesystem paths, connection strings or other server internals."""
@@ -1386,10 +1428,11 @@ def search(conn: sqlite3.Connection, query: str, limit: int = 8) -> list[dict]:
         join = "r.driver_id" if kind == "driver" else "r.constructor_id"
         hidden_sql, hidden_params = _hidden_clause(kind)
         out += [
-            {"kind": kind, "id": row["id"], "label": row["name"], "sublabel": f"{row['wins']} wins"}
+            {"kind": kind, "id": row["id"], "slug": row["slug"], "label": row["name"],
+             "sublabel": f"{row['wins']} wins"}
             for row in conn.execute(
                 f"""
-                SELECT e.id, e.name, {extra} AS wins
+                SELECT e.id, e.slug, e.name, {extra} AS wins
                 FROM {table} e LEFT JOIN results r ON {join} = e.id
                 WHERE e.name LIKE ? ESCAPE '\\'{hidden_sql}
                 GROUP BY e.id
@@ -1401,9 +1444,10 @@ def search(conn: sqlite3.Connection, query: str, limit: int = 8) -> list[dict]:
         ]
 
     out += [
-        {"kind": "circuit", "id": row["id"], "label": row["name"], "sublabel": row["country"]}
+        {"kind": "circuit", "id": row["id"], "slug": row["slug"], "label": row["name"],
+         "sublabel": row["country"]}
         for row in conn.execute(
-            "SELECT id, name, country FROM circuits WHERE name LIKE ? ESCAPE '\\' OR country LIKE ? ESCAPE '\\' "
+            "SELECT id, slug, name, country FROM circuits WHERE name LIKE ? ESCAPE '\\' OR country LIKE ? ESCAPE '\\' "
             "ORDER BY INSTR(LOWER(name), LOWER(?)), name LIMIT ?",
             [pattern, pattern, text, limit],
         )

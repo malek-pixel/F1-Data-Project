@@ -4,12 +4,18 @@ import { useApi, useDebounced } from "../hooks/useApi";
 import { qs } from "../services/api";
 import type { SearchHit } from "../types";
 
-export const ROUTE: Record<SearchHit["kind"], (id: number) => string> = {
-  driver: (id) => `/drivers/${id}`,
-  constructor: (id) => `/constructors/${id}`,
-  circuit: (id) => `/circuits/${id}`,
-  race: (id) => `/races/${id}`,
-  season: (id) => `/seasons/${id}`,
+/** Route for a search hit.
+ *
+ *  Entities are addressed by slug, because the numeric id is assigned per
+ *  data store and resolves to a different entity depending on which backend
+ *  answered. Races and seasons have no slug -- a season IS its year, and a
+ *  race is addressed by its own id -- so they keep the number. */
+export const ROUTE: Record<SearchHit["kind"], (key: string | number) => string> = {
+  driver: (key) => `/drivers/${key}`,
+  constructor: (key) => `/constructors/${key}`,
+  circuit: (key) => `/circuits/${key}`,
+  race: (key) => `/races/${key}`,
+  season: (key) => `/seasons/${key}`,
 };
 
 /**
@@ -55,7 +61,7 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
   if (!open) return null;
 
   const go = (hit: SearchHit) => {
-    navigate(ROUTE[hit.kind](hit.id));
+    navigate(ROUTE[hit.kind](hit.slug ?? hit.id));
     onClose();
   };
   const goAll = () => {

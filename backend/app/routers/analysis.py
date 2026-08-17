@@ -7,6 +7,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from .. import analytics
+from .. import backends, supabase_repo
 from ..db import fetch_one_or_404, get_db
 
 router = APIRouter()
@@ -33,7 +34,15 @@ def compare_entities(
         fetch_one_or_404(conn, table, entity_id)
 
     singular = "driver" if entity == "drivers" else "constructor"
-    result = analytics.compare(conn, singular, left, right)
+    left_row = fetch_one_or_404(conn, table, left)
+    right_row = fetch_one_or_404(conn, table, right)
+    result = backends.serve(
+        "compare",
+        lambda: analytics.compare(conn, singular, left, right),
+        # Addressed by slug, never by the id in the URL: ids are store-local,
+        # so passing one through would compare two different entities.
+        lambda: supabase_repo.compare(singular, left_row["slug"], right_row["slug"]),
+    )
     result["left_name"] = conn.execute(f"SELECT name FROM {table} WHERE id = ?", [left]).fetchone()["name"]
     result["right_name"] = conn.execute(f"SELECT name FROM {table} WHERE id = ?", [right]).fetchone()["name"]
     result["methodology"] = (
@@ -62,8 +71,19 @@ def get_insights(conn: sqlite3.Connection = Depends(get_db), limit: int = Query(
 
 @router.get("/dataset/summary", tags=["dataset"])
 def get_dataset_summary(conn: sqlite3.Connection = Depends(get_db)):
-    """Schema shape, coverage and known issues. No server internals."""
-    return analytics.dataset_summary(conn)
+    """Schema shape, coverage and known issues. No server internals.
+
+    Availability is counted from the serving store, so the answer describes
+    the database actually answering the request rather than a list written
+    down somewhere.
+    """
+    summary = analytics.dataset_summary(conn)
+    summary["availability"] = backends.serve(
+        "dataset_availability",
+        lambda: analytics.dataset_availability(conn),
+        supabase_repo.dataset_availability,
+    )
+    return summary
 
 
 @router.get("/cars", tags=["cars"])
@@ -72,7 +92,12 @@ def get_car_library(conn: sqlite3.Connection = Depends(get_db)):
     return {
         "teams": analytics.car_library(conn),
         "unit": "constructor-season",
-        "chassis_available": False,
+        # The `cars` table is empty in both stores and this says so rather
+        # than omitting the field. Verified against the database rather than
+        # hardcoded, so it becomes true on its own if a source ever appears.
+        "chassis_available": bool(
+            backends.serve("cars", lambda: analytics.cars(conn), supabase_repo.cars)
+        ),
     }
 
 
@@ -83,4 +108,9 @@ def global_search(
     conn: sqlite3.Connection = Depends(get_db),
 ):
     """Search drivers, constructors, circuits and seasons."""
-    return {"query": q, "results": analytics.search(conn, q, limit)}
+    results = backends.serve(
+        "search",
+        lambda: analytics.search(conn, q, limit),
+        lambda: supabase_repo.search(q, limit),
+    )
+    return {"query": q, "results": results}

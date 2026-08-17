@@ -181,6 +181,8 @@ def test_every_declared_capability_is_compared_somewhere(request):
         "constructor_by_slug", "constructor_seasons", "constructor_drivers",
         "circuit_by_slug", "circuits", "seasons", "season",
         "standings", "races", "race", "leaderboard",
+        "search", "season_dominance", "era_summary", "distribution",
+        "compare", "cars", "dataset_availability",
     }
     missing = backends.SUPABASE_CAPABILITIES - compared
     assert not missing, (

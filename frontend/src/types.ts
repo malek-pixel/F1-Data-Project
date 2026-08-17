@@ -321,6 +321,9 @@ export interface DatasetSummary {
 export interface SearchHit {
   kind: "driver" | "constructor" | "circuit" | "race" | "season";
   id: number;
+  /** Portable identifier for drivers, constructors and circuits.
+   *  Null for races and seasons, which are addressed by their own numbers. */
+  slug: string | null;
   label: string;
   sublabel: string;
 }

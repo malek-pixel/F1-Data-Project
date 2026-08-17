@@ -50,6 +50,18 @@ DISPATCHED_PATHS = [
     "/api/seasons/2025/standings",
     "/api/seasons/2021/standings",
     "/api/seasons/2000/standings",
+    # The seven whose definitions moved into the database in migration 19.
+    # Each was previously SQLite-only.
+    "/api/search?q=ham",
+    "/api/search?q=ferrari",
+    "/api/drivers/hamilton/distribution",
+    "/api/drivers/aitken/distribution",
+    "/api/seasons/2023/dominance",
+    "/api/seasons/2021/dominance",
+    "/api/analytics/eras",
+    "/api/compare/drivers?left=1&right=2",
+    "/api/cars",
+    "/api/dataset/summary",
 ]
 
 
@@ -128,12 +140,14 @@ def test_supabase_backend_reports_itself_in_health(clients):
 def test_undispatched_endpoint_fails_loudly_on_supabase(clients):
     """An endpoint with no Postgres implementation must not quietly work.
 
-    `/api/search` is SQLite-only by design. Under Supabase it has to raise
-    rather than return the SQLite answer: a silent fallback would let the
-    whole parity suite pass by comparing SQLite against itself.
+    `/api/insights` is the last SQLite-only endpoint, and by design: it
+    composes a narrative in Python from aggregates that are themselves all
+    available on Supabase. Under Supabase it has to raise rather than return
+    the SQLite answer -- a silent fallback would let the whole parity suite
+    pass by comparing SQLite against itself.
     """
     from backend.app import backends
 
-    assert "search" in backends.UNIMPLEMENTED_ON_SUPABASE
+    assert "insights" in backends.UNIMPLEMENTED_ON_SUPABASE
     with pytest.raises(backends.CapabilityMissing):
-        backends.require("search", backends.SUPABASE)
+        backends.require("insights", backends.SUPABASE)

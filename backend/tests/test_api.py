@@ -434,3 +434,50 @@ def test_race_list_winner_slug_and_id_are_null_together(client):
     for race in client.get("/api/races?limit=200").json():
         assert (race["winner_driver_id"] is None) == (race["winner_driver_slug"] is None)
         assert (race["winner_constructor_id"] is None) == (race["winner_constructor_slug"] is None)
+
+
+ENTITY_SUBRESOURCES = [
+    "/api/drivers/{driver}/seasons",
+    "/api/drivers/{driver}/distribution",
+    "/api/drivers/{driver}/qualifying",
+    "/api/drivers/{driver}/teammates",
+    "/api/drivers/{driver}/circuits",
+    "/api/constructors/{constructor}/drivers",
+    "/api/constructors/{constructor}/distribution",
+    "/api/circuits/{circuit}/specialists",
+]
+
+
+@pytest.mark.parametrize("template", ENTITY_SUBRESOURCES)
+def test_every_entity_subresource_accepts_a_slug(client, template):
+    """A slug must work everywhere an entity is addressed, not just on detail routes.
+
+    Six of these took `driver_id: int` and returned 422 for a slug long after
+    the detail routes had been converted, so `/drivers/hamilton` worked while
+    `/drivers/hamilton/qualifying` did not. Nothing caught it because each
+    route was correct in isolation; only addressing the whole set the same way
+    reveals the gap.
+    """
+    path = template.format(driver="hamilton", constructor="ferrari", circuit="monza")
+    assert client.get(path).status_code == 200, f"{path} rejects a slug"
+
+
+@pytest.mark.parametrize("template", ENTITY_SUBRESOURCES)
+def test_slug_and_legacy_id_return_the_same_subresource(client, template):
+    """Old numeric links must keep resolving to the same entity.
+
+    Integer ids are still in circulation. They are accepted, not preferred --
+    and if the two key spaces ever disagreed, a bookmark would silently open a
+    different driver's page.
+    """
+    ids = {
+        "hamilton": client.get("/api/drivers/hamilton").json()["id"],
+        "ferrari": client.get("/api/constructors/ferrari").json()["id"],
+        "monza": client.get("/api/circuits/monza").json()["id"],
+    }
+    by_slug = client.get(template.format(driver="hamilton", constructor="ferrari", circuit="monza"))
+    by_id = client.get(
+        template.format(driver=ids["hamilton"], constructor=ids["ferrari"], circuit=ids["monza"])
+    )
+    assert by_slug.status_code == by_id.status_code == 200
+    assert by_slug.json() == by_id.json()

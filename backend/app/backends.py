@@ -10,26 +10,27 @@ and its RLS were real work sitting entirely off the request path. That is the
 because the numbers disagree (they are reconciled), but because only one of
 them was ever exercised.
 
-THE HONEST PART
----------------
-Selecting Supabase does not make every endpoint work. `supabase_repo` covers a
-subset of the API surface, and the remaining endpoints have no Postgres
-implementation yet. This module therefore carries an explicit capability set
-rather than a boolean.
-
-The rule it enforces: **an unsupported endpoint fails loudly.** It must never
-quietly serve the SQLite answer while claiming to be on Supabase, because a
-silent fallback would make the backend switch untestable -- every parity test
-would pass by comparing SQLite against itself.
+THE RULE IT ENFORCES
+--------------------
+**An unsupported endpoint fails loudly.** It must never quietly serve the
+SQLite answer while claiming to be on Supabase, because a silent fallback
+would make the backend switch untestable -- every parity test would pass by
+comparing SQLite against itself. Hence an explicit capability set rather than
+a boolean.
 
 STATUS
 ------
-The Supabase leg is *selectable but unexecuted*. A fresh clone has no `.env`,
-so SUPABASE_URL / SUPABASE_ANON_KEY are unset, `supabase_repo.configured()` is
-False, and asking for the Supabase backend raises at startup instead of
-degrading. Nothing in this file has been run against the hosted project; the
-parity suite in `backend/tests/test_backend_parity.py` is what would prove it,
-and it skips without credentials.
+The Supabase leg is selectable AND executed. 27 of the 28 endpoints are
+implemented against it and each one is compared, value for value, with the
+SQLite answer; `insights` is the exception and is documented below.
+
+This section previously read "selectable but unexecuted -- nothing in this
+file has been run against the hosted project". That was true when written.
+
+A fresh clone still has no `.env`, so SUPABASE_URL / SUPABASE_ANON_KEY are
+unset, `supabase_repo.configured()` is False, and asking for the Supabase
+backend raises at startup instead of degrading. The parity suites skip in that
+state, and a skip is missing coverage rather than a pass.
 """
 
 from __future__ import annotations
@@ -77,26 +78,34 @@ SUPABASE_CAPABILITIES = frozenset({
     "races",
     "race",
     "leaderboard",
+    # Migration 19 moved these eight definitions INTO the database, so they
+    # are no longer Python-only. They were the last endpoints with no
+    # Postgres implementation.
+    "search",
+    "season_dominance",
+    "era_summary",
+    "distribution",
+    "compare",
+    "cars",
+    "dataset_availability",
 })
 
 # Endpoints with NO Postgres implementation, and why. Written down because
-# "unsupported" is otherwise indistinguishable from "forgotten", and because
-# each of these is a decision rather than an oversight.
+# "unsupported" is otherwise indistinguishable from "forgotten".
 #
-# Every one of them is a derived analysis that exists only as SQL inside
-# backend/app/analytics.py. Reproducing them as Postgres views would put the
-# same metric in two places, which is the one thing this project's
-# "one definition per metric" rule forbids -- so they stay SQLite-only until
-# the definition itself moves into the database.
+# This list used to hold eight entries, each justified on the grounds that
+# reproducing it as a view would define the same metric twice. That reasoning
+# was right about the danger and wrong about the remedy: the fix is to MOVE
+# the definition into the database, not to copy it. Migration 19 did exactly
+# that, and seven of the eight became ordinary view-backed endpoints.
+#
+# What remains is not a metric at all.
 UNIMPLEMENTED_ON_SUPABASE = {
-    "search": "cross-entity search; no view, and PostgREST cannot span tables in one query",
-    "insights": "narrative findings composed from several aggregates in Python",
-    "eras": "era segmentation is a Python-side clustering of season stats",
-    "dominance": "derived concentration measure, defined only in analytics.py",
-    "compare": "pairwise comparison assembled from two stat blocks plus shared-season logic",
-    "distribution": "finishing-position histogram; no view",
-    "cars": "the cars table is empty in both stores -- no source exists",
-    "dataset_summary": "reports on the serving store itself, including which datasets are absent",
+    "insights": (
+        "narrative composed in Python from several aggregates. Each aggregate "
+        "it reads IS available on Supabase; only the assembly and phrasing are "
+        "Python, and those are presentation rather than a metric."
+    ),
 }
 
 
