@@ -15,14 +15,60 @@ python -m backend.etl.laps --status      lap ingestion progress
 
 ---
 
-## 🔄 RUNNING RIGHT NOW — lap times
+## 🔄 RUNNING RIGHT NOW — two downloads
 
-A background fetch is downloading per-lap timings for all 503 races. It is
-**resumable**: if it stops, rerunning picks up exactly where it left off and
-re-requests nothing.
+Two background fetches. Both **resumable**: nothing already downloaded is ever
+re-requested, so stopping and restarting costs only the time it was stopped.
 
-| | |
-|---|---|
+| | Downloading | Check progress |
+|---|---|---|
+| **Laps** | per-lap timings, all 503 races | `python -m backend.etl.laps --status` |
+| **Practice** | practice laps, tyres, sector times (2018+) | `python -m backend.etl.practice --status` |
+
+### Can I close the laptop?
+
+**No — sleeping the machine pauses both.** They are ordinary local processes,
+not cloud jobs. Nothing is lost; they simply stop until it wakes.
+
+* **Closing the lid / sleep** — pauses. Usually resumes on wake by itself.
+* **Shutdown or restart** — the processes die. Nothing is lost, but you must
+  restart them by hand (below).
+* **Leaving it awake** — they finish on their own.
+
+To keep it running unattended, set the power settings so the machine does not
+sleep on its own, then leave it.
+
+### Restart them (safe at any time, even if unsure)
+
+```
+python -u -m backend.etl.fetch_until_done laps
+python -u -m backend.etl.fetch_until_done practice
+```
+
+Run them in two separate terminals. Each loops until its dataset is complete
+and stops on its own if two passes in a row achieve nothing, so it will not
+spin forever pretending to work.
+
+### Make it much faster
+
+Set `JOLPICA_API_KEY` in `.env`. It raises the hourly request cap roughly
+twentyfold and turns the lap fetch from an overnight job into under an hour.
+
+### When BOTH report `"remaining": 0`, run these
+
+```
+python -m backend.etl.build_laps
+python -m backend.etl.build_practice
+python -m backend.etl.build
+python -m backend.etl.supabase_import
+python -m pytest backend/tests -q
+```
+
+Until then both tables are genuinely partial, and every report says so --
+coverage prints as a fraction ("204/503 races"), never as a season range,
+because the endpoints of a half-filled set are not coverage.
+
+---|---|
 | Progress | see `python -m backend.etl.laps --status` |
 | Speed | limited by the API's ~500 requests/hour cap |
 | Total time | ~9 hours unattended |
