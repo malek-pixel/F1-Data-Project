@@ -61,6 +61,8 @@ CIRCUITS_CSV = REPO_ROOT / "data" / "jolpica_circuits.csv"
 QUALIFYING_CSV = REPO_ROOT / "data" / "jolpica_qualifying.csv"
 # Pit stops. Source coverage begins in 2011 -- see migration 14.
 PITSTOPS_CSV = REPO_ROOT / "data" / "jolpica_pitstops.csv"
+SESSIONS_CSV = REPO_ROOT / "data" / "jolpica_sessions.csv"
+LAPTIMES_CSV = REPO_ROOT / "data" / "jolpica_laptimes.csv"
 CIRCUIT_ASSET_DIR = REPO_ROOT / "frontend" / "public" / "circuits"
 
 DATASET_KEY = "ergast_results"
@@ -107,6 +109,24 @@ def slugify(value: str) -> str:
     """
     folded = strip_accents(value).lower()
     return "-".join("".join(c if c.isalnum() else " " for c in folded).split())
+
+
+def _dimension_slugs(path: Path, name_col: str, id_col: str) -> dict[str, str]:
+    """display name -> upstream source id, from a committed dimension CSV.
+
+    Read from the file rather than recomputed, because the source id is not
+    derivable from the name: 'Adrian Sutil' is 'sutil', not 'adrian-sutil',
+    and 'Max Verstappen' is 'max_verstappen'. Any rule that guessed would be
+    right often enough to look correct and wrong often enough to matter.
+    """
+    if not path.exists():
+        return {}
+    with path.open(newline="", encoding="utf-8") as handle:
+        return {
+            row[name_col]: row[id_col]
+            for row in csv.DictReader(handle)
+            if row.get(id_col)
+        }
 
 
 class Report:
@@ -267,6 +287,25 @@ def promote(conn, report: Report, rules: list[dict], dataset_id: int) -> None:
         )
 
         # ---- drivers / constructors
+        #
+        # Two identifiers are written, and they are not interchangeable.
+        #
+        # `driver_key` is derived from the display name ('adrian-sutil'). It
+        # is this store's own key and predates the slug; it stays because
+        # views and existing links depend on it.
+        #
+        # `slug` is the upstream source's own id ('sutil'), read from the
+        # committed dimension CSV. It is the only identifier that addresses
+        # the same entity in the SQLite build, and it is NOT NULL -- which is
+        # why it must be supplied on INSERT even for rows that already exist:
+        # Postgres evaluates NOT NULL before ON CONFLICT resolves, so omitting
+        # it fails the whole upsert rather than falling through to the update.
+        source_slugs = {
+            "drivers": _dimension_slugs(DRIVERS_CSV, "driver", "jolpica_driver_id"),
+            "constructors": _dimension_slugs(
+                CONSTRUCTORS_CSV, "constructor", "jolpica_constructor_id"
+            ),
+        }
         for table, key_col, name_col, source_col in (
             ("drivers", "driver_key", "display_name", "driver"),
             ("constructors", "constructor_key", "constructor_name", "constructor"),
@@ -275,12 +314,24 @@ def promote(conn, report: Report, rules: list[dict], dataset_id: int) -> None:
                 f"SELECT DISTINCT trim({source_col}) FROM staging_results WHERE run_id = %s AND is_valid",
                 (report.run_id,),
             )
-            entities = [(slugify(name), name) for (name,) in cur.fetchall()]
+            names = [name for (name,) in cur.fetchall()]
+            slugs = source_slugs[table]
+            missing = sorted(n for n in names if n not in slugs)
+            if missing:
+                # Refuse rather than invent one. A fabricated slug would be
+                # unique, non-null and wrong -- it would satisfy every
+                # constraint while pointing at nothing in the other store.
+                report.check(f"{table} slugs resolve", "fail", "fatal", len(missing),
+                             f"no source id for: {', '.join(missing[:5])}")
+                return
+
             cur.executemany(
-                f"""INSERT INTO {table} ({key_col}, {name_col}) VALUES (%s,%s)
+                f"""INSERT INTO {table} ({key_col}, {name_col}, slug) VALUES (%s,%s,%s)
                     ON CONFLICT ({key_col}) DO UPDATE
-                      SET {name_col} = excluded.{name_col}, updated_at = now()""",
-                entities,
+                      SET {name_col} = excluded.{name_col},
+                          slug       = excluded.slug,
+                          updated_at = now()""",
+                [(slugify(name), name, slugs[name]) for name in names],
             )
 
         # ---- races
@@ -520,6 +571,145 @@ def promote_pit_stops(conn, report: Report, dataset_id: int) -> None:
             "info" if early == 0 else "fatal", early,
             "pit stops recorded for seasons the source does not cover",
         )
+
+
+def promote_sessions(conn, report: Report, dataset_id: int) -> None:
+    """Load the race-weekend timetable, 2006 onward.
+
+    Schedule only -- no classifications. See build_sessions.py for why there
+    is no practice-results counterpart: the source has none, and an empty
+    table would misrepresent that as "nobody set a time".
+
+    Coverage before 2006 is genuinely zero, so no completeness check against
+    `races` is made; what is checked is that every row in the file landed.
+    """
+    if not SESSIONS_CSV.exists():
+        report.check("session source", "warn", "warning", 0, "jolpica_sessions.csv missing")
+        return
+
+    with SESSIONS_CSV.open(newline="", encoding="utf-8") as handle:
+        rows = list(csv.DictReader(handle))
+    report.counts["session source rows"] = len(rows)
+
+    payload = [
+        (
+            r["session"], r["date"],
+            # "" is absent, not midnight. Most pre-2018 weekends record the
+            # day but not the clock time.
+            (r["time"] or "").strip() or None,
+            dataset_id,
+            int(r["season"]), int(r["round"]),
+        )
+        for r in rows
+    ]
+
+    with conn.cursor() as cur:
+        cur.executemany(
+            """
+            INSERT INTO sessions (race_id, session, date, time, dataset_id)
+            SELECT ra.id, %s, %s::date, %s::time, %s
+            FROM races ra
+            JOIN seasons s ON s.id = ra.season_id AND s.year = %s
+            WHERE ra.round = %s
+            ON CONFLICT (race_id, session) DO UPDATE
+              SET date = excluded.date, time = excluded.time, updated_at = now()
+            """,
+            payload,
+        )
+        cur.execute("SELECT count(*) FROM sessions")
+        loaded = cur.fetchone()[0]
+
+    status = "pass" if loaded == len(rows) else "fail"
+    report.check("sessions loaded", status, "fatal" if status == "fail" else "info",
+                 loaded, f"{loaded} of {len(rows)} source rows")
+
+
+def promote_lap_times(conn, report: Report, dataset_id: int) -> None:
+    """Load per-lap timings.
+
+    COPY into an unlogged staging table, then one set-based INSERT. Half a
+    million rows through executemany would be a round trip each; this is two
+    statements.
+
+    Joins on `drivers.slug` -- the source's own driver id, which is exactly
+    what the lap rows carry. Before the slug column existed this needed a
+    round trip through the display name, which is the one field a rename
+    breaks.
+
+    Partial coverage is expected and is not an error: the fetch is resumable
+    per race, so a half-loaded cache produces a half-loaded table. What would
+    be an error is a lap row whose driver does not resolve.
+    """
+    if not LAPTIMES_CSV.exists():
+        report.check("lap time source", "warn", "warning", 0,
+                     "jolpica_laptimes.csv missing (ingestion not run)")
+        return
+
+    with LAPTIMES_CSV.open(newline="", encoding="utf-8") as handle:
+        rows = list(csv.DictReader(handle))
+    report.counts["lap time source rows"] = len(rows)
+    if not rows:
+        report.check("lap times loaded", "warn", "warning", 0, "source file is empty")
+        return
+
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            CREATE UNLOGGED TABLE IF NOT EXISTS staging_lap_times (
+                season int, round int, driver_slug text,
+                lap int, position int, time_text text, time_ms int
+            )
+            """
+        )
+        cur.execute("TRUNCATE staging_lap_times")
+        with cur.copy(
+            "COPY staging_lap_times (season, round, driver_slug, lap, position, time_text, time_ms)"
+            " FROM STDIN"
+        ) as copy:
+            for r in rows:
+                copy.write_row((
+                    int(r["season"]), int(r["round"]), r["driver_id"], int(r["lap"]),
+                    int(r["position"]) if r["position"] else None,
+                    r["time"],
+                    # NULL, never 0 -- a zero lap time wins every fastest-lap
+                    # query instead of failing one.
+                    int(r["time_ms"]) if r["time_ms"] else None,
+                ))
+
+        cur.execute(
+            """
+            SELECT DISTINCT st.driver_slug FROM staging_lap_times st
+            LEFT JOIN drivers d ON d.slug = st.driver_slug
+            WHERE d.id IS NULL LIMIT 5
+            """
+        )
+        unresolved = [r[0] for r in cur.fetchall()]
+        if unresolved:
+            report.check("lap time drivers resolve", "fail", "fatal", len(unresolved),
+                         f"unmapped driver slugs: {', '.join(unresolved)}")
+            return
+
+        cur.execute(
+            """
+            INSERT INTO lap_times (race_id, driver_id, lap, position, time_text, time_ms, dataset_id)
+            SELECT ra.id, d.id, st.lap, st.position, st.time_text, st.time_ms, %s
+            FROM staging_lap_times st
+            JOIN seasons s  ON s.year = st.season
+            JOIN races ra   ON ra.season_id = s.id AND ra.round = st.round
+            JOIN drivers d  ON d.slug = st.driver_slug
+            ON CONFLICT (race_id, driver_id, lap) DO UPDATE
+              SET position = excluded.position, time_text = excluded.time_text,
+                  time_ms = excluded.time_ms, updated_at = now()
+            """,
+            (dataset_id,),
+        )
+        cur.execute("SELECT count(*) FROM lap_times")
+        loaded = cur.fetchone()[0]
+        cur.execute("DROP TABLE staging_lap_times")
+
+    status = "pass" if loaded == len(rows) else "fail"
+    report.check("lap times loaded", status, "fatal" if status == "fail" else "info",
+                 loaded, f"{loaded} of {len(rows)} source rows")
 
 
 def promote_qualifying(conn, report: Report, dataset_id: int) -> None:
@@ -925,6 +1115,8 @@ def main() -> int:
             promote_dimensions(conn, report)
             promote_qualifying(conn, report, dataset_id)
             promote_pit_stops(conn, report, dataset_id)
+            promote_sessions(conn, report, dataset_id)
+            promote_lap_times(conn, report, dataset_id)
             reconcile(conn, report)
             persist_report(conn, report)
 

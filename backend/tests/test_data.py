@@ -181,3 +181,57 @@ def test_coverage_span_matches_the_data(conn):
 
     lo, hi = conn.execute("SELECT MIN(season), MAX(season) FROM races").fetchone()
     assert analytics.coverage_span(conn) == f"{lo}-{hi}"
+
+
+# ---------------------------------------------------------------------------
+# Known upstream defects.
+#
+# These document faults in the SOURCE, not in the pipeline. They are pinned to
+# an exact set so the defect stays visible and cannot quietly grow: a test that
+# merely tolerated duplicates would hide the next one.
+# ---------------------------------------------------------------------------
+
+# Sessions where the source reports two drivers at the same qualifying
+# position. Verified against the cached source payload: Jolpica itself returns
+# position 15 twice for the 2023 British Grand Prix, with no position 20 in a
+# 20-row session. The rows are ingested exactly as published rather than
+# renumbered, because renumbering would invent an order the source does not
+# state.
+KNOWN_DUPLICATE_QUALIFYING_POSITIONS = {
+    (2023, 10, 15),
+    (2024, 8, 14),
+    (2024, 8, 15),
+    (2024, 15, 10),
+    (2024, 17, 15),
+    (2025, 7, 16),
+}
+
+
+def test_duplicate_qualifying_positions_match_the_known_upstream_set(conn):
+    """Pin the upstream defect: no new duplicate may appear unnoticed.
+
+    Found while building the cross-store parity suite, which reported a
+    difference between SQLite and Postgres that turned out to be neither
+    store's fault -- (season, round, position) simply is not unique in
+    qualifying, so the two databases broke a tie differently.
+
+    Failing here means either a new source defect, or one of these was fixed
+    upstream. Both are worth knowing about; neither should be discovered by a
+    reader noticing two drivers on the same grid slot.
+    """
+    found = {
+        (row["season"], row["round"], row["position"])
+        for row in conn.execute(
+            """
+            SELECT ra.season, ra.round, q.position
+            FROM qualifying_results q
+            JOIN races ra ON ra.id = q.race_id
+            GROUP BY q.race_id, q.position
+            HAVING COUNT(*) > 1
+            """
+        )
+    }
+    assert found == KNOWN_DUPLICATE_QUALIFYING_POSITIONS, (
+        f"new duplicates: {sorted(found - KNOWN_DUPLICATE_QUALIFYING_POSITIONS)}; "
+        f"resolved upstream: {sorted(KNOWN_DUPLICATE_QUALIFYING_POSITIONS - found)}"
+    )
