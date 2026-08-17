@@ -54,7 +54,24 @@ HOURLY_BUDGET = _AUTHENTICATED_HOURLY if API_KEY else _UNAUTHENTICATED_HOURLY
 # 2% headroom: landing exactly on the limit is landing over it.
 MIN_REQUEST_INTERVAL = 3600.0 / (HOURLY_BUDGET * 0.98)
 
+# Once this many calls in a row come back 429, stop probing and wait out the
+# window properly.
+#
+# WHY A COOL-OFF AND NOT JUST BACKOFF
+# -----------------------------------
+# Per-request backoff resets on every new request, so a paced loop that keeps
+# asking will consume each refill the instant it appears and see 429 again --
+# the bucket never gets a chance to fill. Observed directly: a paced run sat
+# at zero progress for over an hour while making a full budget's worth of
+# failed requests.
+#
+# Sleeping for a solid block instead lets the window actually reopen. It looks
+# idle, and that is the point.
+CONSECUTIVE_429_BEFORE_COOLOFF = 3
+COOLOFF_SECONDS = 15 * 60
+
 _last_request_at = 0.0
+_consecutive_429 = 0
 
 
 def _throttle() -> None:
@@ -64,6 +81,25 @@ def _throttle() -> None:
     if wait > 0:
         time.sleep(wait)
     _last_request_at = time.monotonic()
+
+
+def _note_throttled() -> None:
+    """Record a 429 and, if they are piling up, wait out the whole window."""
+    global _consecutive_429
+    _consecutive_429 += 1
+    if _consecutive_429 >= CONSECUTIVE_429_BEFORE_COOLOFF:
+        print(
+            f"  rate limit persists after {_consecutive_429} calls; "
+            f"cooling off for {COOLOFF_SECONDS // 60} minutes",
+            flush=True,
+        )
+        time.sleep(COOLOFF_SECONDS)
+        _consecutive_429 = 0
+
+
+def _note_success() -> None:
+    global _consecutive_429
+    _consecutive_429 = 0
 
 
 # Raised from 6 after a full-calendar lap sweep. Six attempts with the backoff
@@ -102,7 +138,10 @@ def _get(path: str, offset: int) -> dict:
         )
         if response.status_code != 429:
             response.raise_for_status()
+            _note_success()
             return response.json()["MRData"]
+
+        _note_throttled()
 
         # Jolpica sends no Retry-After, so `delay` is the fallback in
         # practice. The ceiling is high because an exhausted hourly quota is
