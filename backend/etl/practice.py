@@ -41,6 +41,7 @@ import json
 import logging
 import sqlite3
 import sys
+import time
 import warnings
 from pathlib import Path
 
@@ -62,6 +63,11 @@ SESSIONS = {
 }
 
 FAILURES = CACHE / "practice_failures.json"
+
+# FastF1's event lookup shares the lap fetch's quota, so a sweep meets the
+# same throttle. Waiting it out is the only thing that helps.
+RATE_LIMIT_RETRIES = 6
+RATE_LIMIT_BACKOFF_SECONDS = 120
 
 
 def _fastf1():
@@ -85,6 +91,25 @@ def _fastf1():
     FASTF1_CACHE.mkdir(parents=True, exist_ok=True)
     fastf1.Cache.enable_cache(str(FASTF1_CACHE))
     return fastf1
+
+
+# One schedule lookup per SEASON, not per session.
+#
+# FastF1 resolves an event through its ergast backend, which is the same
+# service the lap fetch uses -- so three lookups per race weekend were
+# spending the shared Jolpica quota, and 309 sessions failed with
+# RateLimitExceededError as a result. Timing data comes from F1 live timing
+# and is genuinely independent; the event lookup is not, and assuming
+# otherwise is what caused this.
+_SCHEDULE_CACHE: dict[int, object] = {}
+
+
+def _event_schedule(fastf1, season: int):
+    if season not in _SCHEDULE_CACHE:
+        # `ergast` is the only backend that returns every round -- the default
+        # silently omits nine of 2024's.
+        _SCHEDULE_CACHE[season] = fastf1.get_event_schedule(season, backend="ergast")
+    return _SCHEDULE_CACHE[season]
 
 
 def cache_path(season: int, round_: int, code: str) -> Path:
@@ -145,17 +170,34 @@ def fetch_session(
         return json.loads(path.read_text(encoding="utf-8"))
 
     fastf1 = _fastf1()
-    try:
-        session = fastf1.get_session(season, round_, SESSIONS[code])
-    except ValueError:
-        # FastF1's default schedule cannot resolve every round number -- 2018
-        # round 1 raises "Invalid round: 1" while round 2 is fine. The event
-        # NAME resolves it (676 laps recovered that way), and the name comes
-        # from our own races table, so this is not a guess.
-        if not race_name:
-            raise
-        session = fastf1.get_session(season, race_name, SESSIONS[code])
-    session.load(telemetry=False, weather=False, messages=False)
+    from fastf1.ergast.interface import ErgastError  # noqa: F401  (import guard)
+
+    for attempt in range(RATE_LIMIT_RETRIES):
+        try:
+            schedule = _event_schedule(fastf1, season)
+            event = schedule[schedule["RoundNumber"] == round_]
+            if event.empty:
+                # Fall back to the name from our own races table rather than
+                # guessing: FastF1 cannot resolve every round number, and 2018
+                # round 1 raises where round 2 is fine.
+                if not race_name:
+                    raise ValueError(f"round {round_} not in the {season} schedule")
+                session = fastf1.get_session(season, race_name, SESSIONS[code])
+            else:
+                session = event.iloc[0].get_session(SESSIONS[code])
+            session.load(telemetry=False, weather=False, messages=False)
+            break
+        except Exception as error:
+            # A rate limit is a wait, not an error. Everything else -- a
+            # session that was never held, timing that does not exist -- is a
+            # fact about the weekend and is raised for the caller to record.
+            if type(error).__name__ != "RateLimitExceededError":
+                raise
+            if attempt == RATE_LIMIT_RETRIES - 1:
+                raise
+            wait = RATE_LIMIT_BACKOFF_SECONDS * (attempt + 1)
+            print(f"    rate limited; waiting {wait}s", flush=True)
+            time.sleep(wait)
 
     rows: list[dict] = []
     for lap in session.laps.itertuples():
@@ -280,13 +322,23 @@ def run(seasons: list[int] | None = None, refresh: bool = False) -> int:
         try:
             rows = fetch_session(season, round_, code, refresh, race_name)
         except Exception as error:  # noqa: BLE001 - recorded, not swallowed
-            # Not every weekend has every session: sprint formats replaced FP2
-            # and FP3 in some years, and a cancelled session is real. Recorded
-            # so the difference between "did not happen" and "could not fetch"
-            # survives into the report instead of both looking like silence.
+            message = str(error)
+            if "does not exist for this event" in message:
+                # NOT a failure. Sprint weekends run one practice session
+                # instead of three, so FP2 and FP3 genuinely did not happen.
+                # Cached empty so it is never asked for again, and so the
+                # report distinguishes "was not held" from "could not fetch" --
+                # counting these as failures made 14 non-events look like
+                # breakage.
+                cache_path(season, round_, code).write_text("[]", encoding="utf-8")
+                failures.pop(key, None)
+                _write_failures(failures)
+                print(f"  {key:>16}  not held this weekend", flush=True)
+                done += 1
+                continue
             failures[key] = f"{type(error).__name__}: {error}"
             _write_failures(failures)
-            print(f"  {key:>16}  unavailable  {str(error)[:60]}", flush=True)
+            print(f"  {key:>16}  unavailable  {message[:60]}", flush=True)
             done += 1
             continue
 
