@@ -1,23 +1,37 @@
-"""Supabase-backed data access. NOT WIRED INTO THE RUNNING API.
+"""Supabase-backed data access. On the request path when F1_BACKEND=supabase.
 
-STATUS -- READ THIS FIRST
--------------------------
-Nothing imports this module except its own tests. The shipped data path is:
+STATUS
+------
+This module now serves requests. With F1_BACKEND unset the API reads SQLite,
+as a fresh clone must; with F1_BACKEND=supabase the routers dispatch here for
+every endpoint in backends.SUPABASE_CAPABILITIES, and raise rather than fall
+back for anything else.
 
-    React -> FastAPI -> SQLite (data/f1.db, built by backend/etl/build.py)
+    React -> FastAPI -> SQLite    (default)
+    React -> FastAPI -> Supabase  (F1_BACKEND=supabase)
 
-This module is a second, parallel materialisation of the same CSV in
-PostgreSQL, kept because the schema, migrations and analytical views in
-`docs/database.md` are real work and are the intended production target. It is
-not currently on any request path, and no router calls it. Its tests skip
-entirely when SUPABASE_URL / SUPABASE_ANON_KEY are unset, which is the default
-for a fresh clone -- so "the tests pass" says nothing about this file.
+The two must be indistinguishable from outside. The adapters at the foot of
+this file exist for that reason alone: the views name things as the database
+does (`display_name`, `driver_slug`) and the API contract names them as
+analytics.py does (`name`, `slug`). Without the translation, switching
+backends would change the shape of every payload -- which is not a backend
+switch but a second, incompatible API sharing a URL.
 
-Treat every claim below as describing the Supabase deployment, not the
-application you get by following README.md. Wiring it in means adding a
-backend switch in `db.py` and routing the routers through it; until that
-exists, `backend/app/analytics.py` remains the only implementation that serves
-a request.
+WHAT PROVES IT
+--------------
+Three suites, each answering a different question:
+
+  * test_store_parity.py    -- do the two DATABASES hold the same rows?
+  * test_backend_parity.py  -- do the two IMPLEMENTATIONS compute the same
+                               numbers from them?
+  * test_api_payload_parity.py -- does the HTTP response match, field for
+                               field, through the real app?
+
+All three skip without credentials, and a skip is missing coverage rather
+than a pass.
+
+This docstring previously opened "NOT WIRED INTO THE RUNNING API", which was
+true when written and stopped being true here.
 
 READ-ONLY BY DESIGN
 -------------------
@@ -376,3 +390,193 @@ def leaderboard(
         offset=offset,
         exact_count=True,
     )
+
+
+# ---------------------------------------------------------------------------
+# Shape adapters.
+#
+# The views name things as the database does -- `display_name`, `driver_slug`,
+# `avg_classified_position` -- and the API contract names them as
+# analytics.py does. Without this translation, switching F1_BACKEND would
+# change the shape of every payload, which is not a backend switch at all: it
+# is a second, incompatible API that happens to share a URL.
+#
+# So these functions exist to make the two backends indistinguishable from
+# outside. test_api_payload_parity.py asserts exactly that, field for field.
+# ---------------------------------------------------------------------------
+
+# Stat keys that analytics._stats() always emits. Listed explicitly rather
+# than copied from whatever the view returned, so a view that grows a column
+# cannot silently widen the API response.
+_STAT_KEYS = (
+    "entries", "wins", "podiums", "top5", "top10",
+    "win_rate", "podium_rate", "top5_rate", "top10_rate",
+    "avg_classified_position", "best_classified_position", "rates_reliable",
+    "finishes", "dnfs", "dnf_rate", "points", "avg_grid", "avg_positions_gained",
+)
+
+# Rates arrive from Postgres as numeric strings over PostgREST's JSON. Left as
+# strings they would serialise as `"0.276"` where SQLite gives `0.276`, and a
+# client doing arithmetic would silently concatenate instead of adding.
+_FLOAT_KEYS = frozenset({
+    "win_rate", "podium_rate", "top5_rate", "top10_rate",
+    "avg_classified_position", "dnf_rate", "points",
+    "avg_grid", "avg_positions_gained",
+})
+
+MIN_ENTRIES_FOR_RATES = 10
+
+
+def _number(value):
+    """Coerce a PostgREST numeric to float, preserving None."""
+    return None if value is None else float(value)
+
+
+def _stat_block(row: dict | None) -> dict:
+    """A view row rendered as the canonical stat block.
+
+    Mirrors analytics._stats(), including its central rule: when there are no
+    entries every rate is None rather than 0.0, so "no data" stays
+    distinguishable from "genuinely zero".
+    """
+    if not row or not row.get("entries"):
+        return {key: (0 if key in ("entries", "wins", "podiums", "top5", "top10") else None)
+                for key in _STAT_KEYS} | {"rates_reliable": False}
+
+    block = {}
+    for key in _STAT_KEYS:
+        value = row.get(key)
+        block[key] = _number(value) if key in _FLOAT_KEYS else value
+
+    # Derived here rather than read, because not every view computes it and a
+    # missing key would serialise as null -- which reads as "unknown
+    # reliability" instead of "below the threshold".
+    block["rates_reliable"] = row["entries"] >= MIN_ENTRIES_FOR_RATES
+    return block
+
+
+def driver_detail(slug: str) -> dict | None:
+    """Payload for /api/drivers/{id}, shaped exactly as the SQLite path."""
+    row = driver_by_slug(slug)
+    if row is None:
+        return None
+    return {
+        "id": row["driver_id"],
+        "slug": row["driver_slug"],
+        "name": row["display_name"],
+        # Descriptive columns live on the table, not the stats view.
+        **_driver_descriptors(slug),
+        "stats": _stat_block(row),
+        "constructors": driver_constructor_history(slug),
+    }
+
+
+def _driver_descriptors(slug: str) -> dict:
+    rows, _ = query(
+        "drivers",
+        select="nationality,date_of_birth,abbreviation,permanent_number",
+        filters={"slug": f"eq.{slug}"},
+        limit=1,
+    )
+    row = rows[0] if rows else {}
+    return {
+        "nationality": row.get("nationality"),
+        "date_of_birth": row.get("date_of_birth"),
+        "abbreviation": row.get("abbreviation"),
+        "permanent_number": row.get("permanent_number"),
+    }
+
+
+def driver_constructor_history(slug: str) -> list[dict]:
+    """Which constructors a driver raced for, and when.
+
+    Read from driver_constructor_seasons, the derived table the ingestion
+    maintains, so this is not a second definition of the relationship.
+    """
+    driver = driver_by_slug(slug)
+    if driver is None:
+        return []
+    rows, _ = query(
+        "driver_constructor_seasons",
+        select="constructor_id,season_id,race_count",
+        filters={"driver_id": f"eq.{driver['driver_id']}"},
+    )
+    return rows
+
+
+def driver_seasons_detail(slug: str) -> list[dict]:
+    """Season blocks shaped as analytics.by_season returns them."""
+    return [
+        {"season": row["season"], **_stat_block(row)}
+        for row in driver_seasons(slug)
+    ]
+
+
+def constructor_detail(slug: str) -> dict | None:
+    row = constructor_by_slug(slug)
+    if row is None:
+        return None
+    rows, _ = query(
+        "constructors", select="nationality", filters={"slug": f"eq.{slug}"}, limit=1
+    )
+    return {
+        "id": row["constructor_id"],
+        "slug": row["constructor_slug"],
+        "name": row["constructor_name"],
+        "nationality": rows[0].get("nationality") if rows else None,
+        "stats": _stat_block(row),
+        "seasons": [
+            {"season": s["season"], **_stat_block(s)}
+            for s in constructor_seasons(slug)
+        ],
+    }
+
+
+def standings_detail(season_year: int, entity: str = "driver") -> list[dict]:
+    """Standings shaped as analytics.standings returns them."""
+    name_key = "display_name" if entity == "driver" else "constructor_name"
+    slug_key = "driver_slug" if entity == "driver" else "constructor_slug"
+    id_key = "driver_id" if entity == "driver" else "constructor_id"
+    return [
+        {
+            "position": index,
+            "id": row[id_key],
+            "slug": row[slug_key],
+            "name": row[name_key],
+            "points": _number(row["points"]),
+            "wins": row["wins"],
+            "podiums": row["podiums"],
+            # The standings views do not carry an entry count; it is not part
+            # of the championship and is omitted rather than guessed.
+            "entries": row.get("entries"),
+        }
+        for index, row in enumerate(standings(season_year, entity), start=1)
+    ]
+
+
+def leaderboard_page(
+    entity: str = "driver",
+    sort: str = "wins",
+    limit: int = 50,
+    offset: int = 0,
+    min_entries: int = 1,
+) -> dict:
+    """A page of the ranking, shaped as analytics.leaderboard returns it."""
+    rows, total = leaderboard(entity, sort, limit, offset, min_entries)
+    id_key = "driver_id" if entity == "driver" else "constructor_id"
+    slug_key = "driver_slug" if entity == "driver" else "constructor_slug"
+    name_key = "display_name" if entity == "driver" else "constructor_name"
+    return {
+        "total": total or len(rows),
+        "limit": limit,
+        "offset": offset,
+        "items": [
+            {
+                "id": row[id_key],
+                "slug": row[slug_key],
+                "name": row[name_key],
+                **_stat_block(row),
+            }
+            for row in rows
+        ],
+    }

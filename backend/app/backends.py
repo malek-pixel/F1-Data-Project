@@ -160,6 +160,24 @@ def require(endpoint: str, name: str | None = None) -> str:
     return name
 
 
+def serve(endpoint: str, sqlite, supabase):
+    """Run whichever implementation the active backend provides.
+
+    Both arguments are zero-argument callables, so the unused one is never
+    evaluated -- selecting SQLite must not open a Supabase connection, and
+    vice versa.
+
+    The Supabase branch is only taken when the endpoint is in
+    SUPABASE_CAPABILITIES; anything else raises through `require`. There is
+    deliberately no `except: return sqlite()` here. A fallback would mean the
+    Supabase backend could be selected, silently answer from SQLite, and pass
+    every parity test by comparing SQLite against itself -- which is the exact
+    failure this module exists to prevent.
+    """
+    name = require(endpoint)
+    return sqlite() if name == SQLITE else supabase()
+
+
 def describe() -> dict:
     """Backend state, for /api/health.
 

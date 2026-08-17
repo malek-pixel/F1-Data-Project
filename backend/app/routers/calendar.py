@@ -5,7 +5,7 @@ import sqlite3
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from .. import analytics, schemas
+from .. import analytics, backends, schemas, supabase_repo
 from ..db import get_db
 
 router = APIRouter()
@@ -157,7 +157,17 @@ def get_standings(season: int, conn: sqlite3.Connection = Depends(get_db)):
     `/seasons/{season}`. Verified to reproduce the official champion and exact
     points total for every season in the dataset.
     """
-    drivers = analytics.standings(conn, season, "driver")
+    drivers, constructors = backends.serve(
+        "standings",
+        lambda: (
+            analytics.standings(conn, season, "driver"),
+            analytics.standings(conn, season, "constructor"),
+        ),
+        lambda: (
+            supabase_repo.standings_detail(season, "driver"),
+            supabase_repo.standings_detail(season, "constructor"),
+        ),
+    )
     if not drivers:
         raise HTTPException(status_code=404, detail=f"No races recorded for season {season}")
     return {
@@ -170,5 +180,5 @@ def get_standings(season: int, conn: sqlite3.Connection = Depends(get_db)):
             "differently from the official classification."
         ),
         "drivers": drivers,
-        "constructors": analytics.standings(conn, season, "constructor"),
+        "constructors": constructors,
     }

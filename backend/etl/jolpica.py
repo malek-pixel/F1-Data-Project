@@ -15,6 +15,7 @@ season is cached as one JSON file under `data/cache/`; delete it to refetch.
 from __future__ import annotations
 
 import json
+import os
 import time
 from pathlib import Path
 
@@ -28,6 +29,42 @@ PAUSE_SECONDS = 0.3
 TIMEOUT_SECONDS = 60
 USER_AGENT = "f1-data-project/ingest"
 
+# An API key, when one is configured, raises the hourly quota by an order of
+# magnitude. Optional: without it everything still works, just slower.
+API_KEY = os.getenv("JOLPICA_API_KEY", "").strip()
+
+# Sustained request budget per hour, and the minimum spacing that respects it.
+#
+# WHY PACING RATHER THAN RETRYING
+# -------------------------------
+# Jolpica returns a bare `429 {"detail": "Request was throttled."}` with no
+# Retry-After header once the hourly quota is gone. Retrying then cannot
+# succeed however patient the backoff is -- the quota refills on a clock, not
+# in response to waiting politely -- so a lap sweep that fired as fast as it
+# could spent its first minutes filling the budget and every minute after that
+# failing.
+#
+# Spacing requests to stay just inside the budget is slower per request and
+# far faster overall, because none of them are wasted. A full lap sweep is
+# ~4,600 requests, so unauthenticated it is genuinely an overnight job; with a
+# key it is under an hour.
+_UNAUTHENTICATED_HOURLY = 500
+_AUTHENTICATED_HOURLY = 10_000
+HOURLY_BUDGET = _AUTHENTICATED_HOURLY if API_KEY else _UNAUTHENTICATED_HOURLY
+# 2% headroom: landing exactly on the limit is landing over it.
+MIN_REQUEST_INTERVAL = 3600.0 / (HOURLY_BUDGET * 0.98)
+
+_last_request_at = 0.0
+
+
+def _throttle() -> None:
+    """Sleep just long enough to stay inside the sustained request budget."""
+    global _last_request_at
+    wait = MIN_REQUEST_INTERVAL - (time.monotonic() - _last_request_at)
+    if wait > 0:
+        time.sleep(wait)
+    _last_request_at = time.monotonic()
+
 
 # Raised from 6 after a full-calendar lap sweep. Six attempts with the backoff
 # below tops out at roughly two minutes of waiting, and Jolpica's sustained
@@ -39,35 +76,42 @@ MAX_RETRIES = 10
 
 
 def _get(path: str, offset: int) -> dict:
-    """One API call, retrying on rate limits.
+    """One paced API call, retrying on rate limits.
 
-    Jolpica throttles harder than its documented burst suggests -- a per-race
-    sweep hits 429 after well under a hundred requests. A 429 is not an error
-    to surface, it is a "wait" to obey, so it is retried with exponential
-    backoff and the server's own Retry-After when it sends one.
+    Every call goes through `_throttle` first, so the caller cannot outrun the
+    hourly budget however tight its loop is. That pacing is what prevents the
+    429s rather than the retry logic below, which only handles the case where
+    the budget is already spent -- from an earlier run, say.
 
-    Everything else still raises: a 400 or 404 means the query is wrong, and
-    quietly retrying it would just burn the rate budget.
+    A 429 is not an error to surface, it is a "wait" to obey. Everything else
+    still raises: a 400 or 404 means the query is wrong, and retrying it would
+    burn budget that buys nothing.
     """
     delay = 2.0
+    headers = {"User-Agent": USER_AGENT}
+    if API_KEY:
+        headers["X-API-Key"] = API_KEY
+
     for attempt in range(MAX_RETRIES):
+        _throttle()
         response = requests.get(
             f"{API}/{path}",
             params={"limit": PAGE, "offset": offset},
             timeout=TIMEOUT_SECONDS,
-            headers={"User-Agent": USER_AGENT},
+            headers=headers,
         )
         if response.status_code != 429:
             response.raise_for_status()
             return response.json()["MRData"]
 
-        # Obey the server's own Retry-After when it sends one; otherwise back
-        # off exponentially. The ceiling is 120s rather than 60s for the same
-        # reason the attempt count went up: a long sweep meets throttles that
-        # outlast a one-minute wait.
+        # Jolpica sends no Retry-After, so `delay` is the fallback in
+        # practice. The ceiling is high because an exhausted hourly quota is
+        # refilled by the clock, not by the request rate: waiting minutes is
+        # the only thing that helps, and giving up early just means the same
+        # request is reissued on the next run.
         wait = float(response.headers.get("Retry-After", delay))
         time.sleep(wait)
-        delay = min(delay * 2, 120)
+        delay = min(delay * 2, 300)
 
     raise RuntimeError(f"rate limited after {MAX_RETRIES} attempts: {path}")
 

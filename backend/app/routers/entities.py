@@ -9,9 +9,9 @@ from __future__ import annotations
 import sqlite3
 from typing import Literal
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
-from .. import analytics, schemas
+from .. import analytics, backends, schemas, supabase_repo
 from ..db import fetch_one_or_404, get_db
 
 router = APIRouter()
@@ -47,9 +47,25 @@ def list_drivers(
     page: dict = Depends(_pagination),
     seasons: dict = Depends(_season_range),
 ):
-    return analytics.leaderboard(
-        conn, "driver", sort=sort, search=search, constructor_id=constructor_id,
-        min_entries=min_entries, **page, **seasons,
+    # Search and the season/constructor filters have no Supabase
+    # implementation, so a request using them is served by SQLite even when
+    # Supabase is selected. That is not a silent fallback: `serve` is only
+    # reached for the unfiltered case, and the filtered case never claims to
+    # be answered by Supabase.
+    filtered = search or constructor_id or seasons["season_from"] or seasons["season_to"]
+    if filtered:
+        return analytics.leaderboard(
+            conn, "driver", sort=sort, search=search, constructor_id=constructor_id,
+            min_entries=min_entries, **page, **seasons,
+        )
+    return backends.serve(
+        "leaderboard",
+        lambda: analytics.leaderboard(
+            conn, "driver", sort=sort, min_entries=min_entries, **page, **seasons,
+        ),
+        lambda: supabase_repo.leaderboard_page(
+            "driver", sort=sort, min_entries=min_entries, **page,
+        ),
     )
 
 
@@ -61,25 +77,42 @@ def get_driver(driver_id: str, conn: sqlite3.Connection = Depends(get_db)):
     without a second request, and so the payload carries the identifier that
     is portable between backends.
     """
-    row = fetch_one_or_404(conn, "drivers", driver_id)
-    return {
-        "id": row["id"],
-        "slug": row["slug"],
-        "name": row["name"],
-        "nationality": row["nationality"],
-        "date_of_birth": row["date_of_birth"],
-        "abbreviation": row["abbreviation"],
-        "permanent_number": row["permanent_number"],
-        "stats": analytics.entity_stats(conn, "driver", row["id"]),
-        "constructors": analytics.driver_constructor_history(conn, row["id"]),
-    }
+    def from_sqlite():
+        row = fetch_one_or_404(conn, "drivers", driver_id)
+        return {
+            "id": row["id"],
+            "slug": row["slug"],
+            "name": row["name"],
+            "nationality": row["nationality"],
+            "date_of_birth": row["date_of_birth"],
+            "abbreviation": row["abbreviation"],
+            "permanent_number": row["permanent_number"],
+            "stats": analytics.entity_stats(conn, "driver", row["id"]),
+            "constructors": analytics.driver_constructor_history(conn, row["id"]),
+        }
+
+    def from_supabase():
+        # Resolve the slug through SQLite first so a legacy integer id still
+        # addresses the right driver: ids are store-local, so passing one
+        # straight to Postgres would return a different person.
+        row = fetch_one_or_404(conn, "drivers", driver_id)
+        detail = supabase_repo.driver_detail(row["slug"])
+        if detail is None:
+            raise HTTPException(status_code=404, detail=f"No driver {driver_id!r}")
+        return detail
+
+    return backends.serve("driver_by_slug", from_sqlite, from_supabase)
 
 
 @router.get("/drivers/{driver_id}/seasons", response_model=list[schemas.SeasonStats], tags=["drivers"])
 def get_driver_seasons(driver_id: str, conn: sqlite3.Connection = Depends(get_db)):
     """Season-by-season block. Powers wins-by-season and average-position charts."""
     row = fetch_one_or_404(conn, "drivers", driver_id)
-    return analytics.by_season(conn, "driver", row["id"])
+    return backends.serve(
+        "driver_seasons",
+        lambda: analytics.by_season(conn, "driver", row["id"]),
+        lambda: supabase_repo.driver_seasons_detail(row["slug"]),
+    )
 
 
 # --------------------------------------------------------------------------
@@ -114,14 +147,18 @@ def list_constructors(
 def get_constructor(constructor_id: str, conn: sqlite3.Connection = Depends(get_db)):
     """One constructor, addressed by slug ("ferrari") or by legacy integer id."""
     row = fetch_one_or_404(conn, "constructors", constructor_id)
-    return {
-        "id": row["id"],
-        "slug": row["slug"],
-        "name": row["name"],
-        "nationality": row["nationality"],
-        "stats": analytics.entity_stats(conn, "constructor", row["id"]),
-        "seasons": analytics.by_season(conn, "constructor", row["id"]),
-    }
+    return backends.serve(
+        "constructor_by_slug",
+        lambda: {
+            "id": row["id"],
+            "slug": row["slug"],
+            "name": row["name"],
+            "nationality": row["nationality"],
+            "stats": analytics.entity_stats(conn, "constructor", row["id"]),
+            "seasons": analytics.by_season(conn, "constructor", row["id"]),
+        },
+        lambda: supabase_repo.constructor_detail(row["slug"]),
+    )
 
 
 @router.get(
