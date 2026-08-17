@@ -5,10 +5,10 @@ Updated 2026-08-17. Every ✅ has evidence; nothing is ticked because it looks d
 **Check it yourself** (all pass right now):
 
 ```
-python -m pytest backend/tests -q       229 passed
-cd frontend && npx vitest run            48 passed
+python -m pytest backend/tests -q       249 passed
+cd frontend && npx vitest run            49 passed
 python -m backend.etl.audit              38 checks, 0 failed
-python supabase/verify_migrations.py     17/17 byte-exact
+python supabase/verify_migrations.py     18/18 byte-exact
 python -m backend.etl.crossvalidate      503 races, 0 discrepancies
 python -m backend.etl.laps --status      lap ingestion progress
 ```
@@ -24,8 +24,9 @@ re-requests nothing.
 | | |
 |---|---|
 | Progress | see `python -m backend.etl.laps --status` |
-| Speed | ~35 races/hour (the API throttles hard) |
-| Total time | ~15 hours |
+| Speed | limited by the API's ~500 requests/hour cap |
+| Total time | ~9 hours unattended |
+| Make it fast | set `JOLPICA_API_KEY` — raises the cap 20x, finishes in under an hour |
 | Restart it | `python -u -m backend.etl.laps` |
 
 **When it finishes, run these three:**
@@ -137,18 +138,35 @@ empty table would read as "nobody set a time".
 **Car and engine specs** (your Car Library has nothing real), **tyres**,
 **fastest laps**, **telemetry**, **sector times**.
 
+## ✅ DONE — the backend switch works
+
+`F1_BACKEND=supabase` now genuinely serves. Three separate suites prove it,
+because each catches something the others cannot:
+
+| Suite | Question it answers |
+|---|---|
+| Store parity | Do the two databases hold the same rows? |
+| Backend parity | Do the two implementations compute the same numbers? |
+| API payload parity | Does the HTTP response match, field for field? |
+
+The first two can both pass while the API is broken, which is exactly what
+happened — the third caught season stats returning nulls from Postgres.
+
+## ✅ DONE — the app links on slugs
+
+All 19 entity links now use `/drivers/hamilton`, not `/drivers/48`. Six
+payloads that had no slug to link on now carry one.
+
 ## ❌ NOT DONE — remaining code work
 
 | Item | State |
 |---|---|
-| **Routers still call SQLite directly** | The Supabase functions exist and are tested, but the API doesn't dispatch to them yet. Setting `F1_BACKEND=supabase` is not yet enough. |
-| **10 endpoints have no Supabase version** | Listed with reasons in `backends.py` |
-| **Frontend still links by number** | Works, but should move to slugs |
+| **10 endpoints have no Supabase version** | Listed **with reasons** in `backends.py`. Each is a calculation defined only in Python; copying it into the database would define the same number twice. |
 | **Pre-2000 seasons** | Not loaded (you chose not to) |
 
 ---
 
-## ⚠️ TWO THINGS TO KNOW
+## ⚠️ THREE THINGS TO KNOW
 
 **"Qualifying P1" is not "poles."** Counting fastest-qualifier gives Hamilton
 107; his official count is 104. It is never labelled "poles", and a test locks
@@ -158,6 +176,11 @@ the number.
 by wins, then podiums, then name — so the two backends agree. The real rule is
 a countback and is not implemented. It is documented in both places rather
 than pretended.
+
+**Qualifying has six real errors, from the source.** Two drivers share P15 at
+Silverstone 2023, and there is no P20 in a 20-car session. Six sessions are
+affected. Left exactly as published rather than renumbered, with a test
+pinning the set so a seventh cannot appear unnoticed.
 
 ---
 
