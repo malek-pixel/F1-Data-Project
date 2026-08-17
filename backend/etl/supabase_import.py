@@ -72,6 +72,40 @@ DATASET_VERSION = "2025.1"
 
 MIN_SEASON, MAX_SEASON, MAX_POSITION = 1950, 2100, 40
 
+# Connection settings for a long, write-heavy ingestion.
+#
+# WHAT WAS ACTUALLY WRONG
+# -----------------------
+# Loading a hundred thousand practice laps failed with "SSL error: unexpected
+# eof while reading", then "server closed the connection unexpectedly". Both
+# read as network faults. Neither was.
+#
+# The server's `statement_timeout` is 2 minutes, and a COPY plus set-based
+# INSERT at that volume exceeds it. Postgres cancels the statement and drops
+# the connection, and the client sees a broken socket rather than a timeout.
+# Keepalives were the obvious fix and did nothing, because the socket was
+# never idle -- it was working.
+#
+# So the import raises the limit for ITS OWN SESSION only. This is a
+# server-side maintenance script holding the database password; it is not a
+# user query, and the 2-minute ceiling exists to protect the API from
+# runaway reads. The read-only application path never sets this.
+KEEPALIVE = {
+    "keepalives": 1,
+    "keepalives_idle": 30,
+    "keepalives_interval": 10,
+    "keepalives_count": 5,
+}
+
+# Applied with a SET after connecting, not as a startup option: Supabase's
+# pooler ignores libpq `options`, so the setting silently had no effect and
+# the statement was cancelled anyway.
+#
+# Bounded rather than disabled -- a genuinely stuck statement should still
+# fail, just not one that is merely large.
+INGEST_STATEMENT_TIMEOUT = "30min"
+
+
 
 # ---------------------------------------------------------------- helpers
 
@@ -1194,7 +1228,9 @@ def main() -> int:
     # yields its keys, so `int(season)` received the literal string 'season'.
     # That failed loudly here, but a positional read of a one-column dict would
     # have failed silently. The two places that want a field by name index [0].
-    with psycopg.connect(dsn) as conn:
+    with psycopg.connect(dsn, connect_timeout=30, **KEEPALIVE) as conn:
+        with conn.cursor() as cur:
+            cur.execute(f"SET statement_timeout = '{INGEST_STATEMENT_TIMEOUT}'")
         # One transaction: a failed import leaves the database untouched
         # rather than half-populated.
         with conn.transaction():

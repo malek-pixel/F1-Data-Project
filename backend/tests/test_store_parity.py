@@ -45,16 +45,31 @@ pytestmark = [
 ]
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture
 def lite():
     conn = connect()
     yield conn
     conn.close()
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture
 def pg():
-    with psycopg.connect(os.getenv("SUPABASE_DB_URL"), connect_timeout=30) as conn:
+    """A fresh connection per test, deliberately not module-scoped.
+
+    A single connection held across the whole module gets dropped by the
+    pooler partway through -- these comparisons are large and slow -- and
+    every test after that point fails with an SSL EOF that looks exactly like
+    a data mismatch. A parity suite that reports false differences is worse
+    than no suite: it trains you to distrust the one signal that matters.
+
+    The cost is a connect per test, which is seconds against comparisons that
+    take minutes.
+    """
+    from backend.etl.supabase_import import KEEPALIVE
+
+    with psycopg.connect(
+        os.getenv("SUPABASE_DB_URL"), connect_timeout=30, **KEEPALIVE
+    ) as conn:
         yield conn
 
 
