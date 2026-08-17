@@ -91,8 +91,8 @@ export function UnavailableMetrics() {
             on each race page, labelled "quickest lap" to keep the two
             distinct. */}
         <Unavailable label="FASTEST-LAP AWARDS" why="No source records who received the point." />
-        <Unavailable label="SECTOR TIMES" why="No source supplies sector splits." />
-        <Unavailable label="TYRE COMPOUND" why="No source supplies tyre data." />
+        <Unavailable label="RACE SECTOR TIMES" why="Race lap timing carries a lap time only. Practice sectors exist from 2018." />
+        <Unavailable label="RACE TYRE COMPOUND" why="Not published for race laps. Practice compounds exist from 2018." />
         <Unavailable label="CAR / ENGINE SPEC" why="No source supplies chassis or engine detail." />
       </div>
     </>

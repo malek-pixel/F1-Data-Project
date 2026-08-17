@@ -16,3 +16,14 @@ requests>=2.31
 # SUPABASE_DB_URL. The API never uses it: it reads Supabase over PostgREST with
 # the publishable key, so no application path holds the database password.
 psycopg[binary]>=3.1
+
+# Practice-session timing, tyre compounds and sector times (2018 onward).
+#
+# A SECOND SOURCE, deliberately kept distinct: FastF1 reads Formula 1's own
+# live-timing service, whereas everything else here comes from Jolpica, which
+# publishes no practice data at all. Its rows live in their own table so the
+# two providers can never be silently blended.
+#
+# Ingestion only -- backend/etl/practice.py. The API never imports it, so the
+# application still runs without this installed.
+fastf1>=3.4

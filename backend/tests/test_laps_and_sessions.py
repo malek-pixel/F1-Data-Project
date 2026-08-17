@@ -303,3 +303,107 @@ def test_derived_fastest_lap_is_never_labelled_the_official_award(conn):
 
     assert block["available"] is True
     assert "not the official award" in block["basis"]
+
+
+# ---------------------------------------------------------------------------
+# Practice laps (FastF1 / F1 live timing -- a different source)
+# ---------------------------------------------------------------------------
+
+def test_practice_laps_belong_to_a_real_race_and_driver(conn):
+    orphans = conn.execute(
+        """
+        SELECT COUNT(*) FROM practice_laps p
+        LEFT JOIN races ra  ON ra.id = p.race_id
+        LEFT JOIN drivers d ON d.id  = p.driver_id
+        WHERE ra.id IS NULL OR d.id IS NULL
+        """
+    ).fetchone()[0]
+    assert orphans == 0
+
+
+def test_practice_data_never_predates_live_timing(conn):
+    """2018 is a source boundary, not a fetching limit.
+
+    Formula 1's live timing does not exist before then, so a practice lap
+    attached to an earlier race would mean a join went wrong -- not that an
+    older session was found.
+    """
+    early = conn.execute(
+        """
+        SELECT ra.season, ra.round FROM practice_laps p
+        JOIN races ra ON ra.id = p.race_id
+        WHERE ra.season < 2018 LIMIT 5
+        """
+    ).fetchall()
+    assert not early, f"practice lap before 2018: {[tuple(r) for r in early]}"
+
+
+def test_practice_sector_times_sum_to_the_lap(conn):
+    """Internal consistency of a source we cannot cross-validate.
+
+    Nothing independent publishes practice timing, so this is the strongest
+    check available: three sectors must reconstruct the lap. A unit error, a
+    column swap or a misaligned row all break it.
+
+    The tolerance is 1ms because the source rounds each value independently,
+    so the parts can legitimately miss the whole by a rounding step.
+    """
+    mismatched = conn.execute(
+        """
+        SELECT ra.season, ra.round, p.session, p.lap,
+               p.lap_time, p.sector1 + p.sector2 + p.sector3 AS summed
+        FROM practice_laps p JOIN races ra ON ra.id = p.race_id
+        WHERE p.lap_time IS NOT NULL
+          AND p.sector1 IS NOT NULL AND p.sector2 IS NOT NULL AND p.sector3 IS NOT NULL
+          AND ABS(p.lap_time - (p.sector1 + p.sector2 + p.sector3)) > 0.001
+        LIMIT 5
+        """
+    ).fetchall()
+    assert not mismatched, f"sectors do not reconstruct the lap: {[tuple(r) for r in mismatched]}"
+
+
+def test_no_practice_time_is_stored_as_zero(conn):
+    """Zero is the failure mode that wins rather than errors.
+
+    A zero lap or sector would be returned as the fastest ever set. The CHECK
+    constraints forbid it; this proves they are still on the columns.
+    """
+    for column in ("lap_time", "sector1", "sector2", "sector3", "speed_trap"):
+        bad = conn.execute(
+            f"SELECT COUNT(*) FROM practice_laps WHERE {column} <= 0"
+        ).fetchone()[0]
+        assert bad == 0, f"{column} has {bad} non-positive values"
+
+
+def test_practice_sessions_are_from_the_known_set(conn):
+    codes = {r[0] for r in conn.execute("SELECT DISTINCT session FROM practice_laps")}
+    assert codes <= {"fp1", "fp2", "fp3"}, f"unexpected practice session: {codes}"
+
+
+def test_deleted_laps_are_kept_and_flagged_not_dropped(conn):
+    """A deleted lap happened and is recorded.
+
+    Which laps stood is what decides a session's fastest time, so dropping
+    them at ingestion would make that unanswerable. The flag exists so a
+    consumer can exclude them deliberately rather than never knowing.
+    """
+    columns = {r[1] for r in conn.execute("PRAGMA table_info(practice_laps)")}
+    assert "deleted" in columns
+    assert conn.execute("SELECT COUNT(*) FROM practice_laps WHERE deleted IS NULL").fetchone()[0] == 0
+
+
+def test_tyre_compounds_are_recorded_as_the_source_names_them(conn):
+    """Compounds are stored verbatim, including 'UNKNOWN'.
+
+    'UNKNOWN' is the source's own value for a lap whose compound it did not
+    capture. It is kept rather than converted to NULL, because those two say
+    different things: the source recorded an answer, and the answer was that
+    it did not know.
+    """
+    compounds = {r[0] for r in conn.execute(
+        "SELECT DISTINCT compound FROM practice_laps WHERE compound IS NOT NULL"
+    )}
+    if not compounds:
+        pytest.skip("no practice laps loaded yet")
+    known = {"SOFT", "MEDIUM", "HARD", "INTERMEDIATE", "WET", "UNKNOWN", "TEST_UNKNOWN"}
+    assert compounds <= known, f"unexpected compound: {compounds - known}"

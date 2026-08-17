@@ -249,14 +249,17 @@ def run_checks(conn: sqlite3.Connection) -> list[Check]:
 # what is missing becomes a lie the moment someone ingests one of the items
 # and does not think to edit it.
 #
-# `practice_results` stays: the Ergast-compatible source exposes no practice
-# classifications (its /practice, /fp1 and /sessions routes 400 or 404). The
-# weekend timetable IS ingested and is reported separately as `sessions` --
-# the two must not be conflated, because having the schedule of FP1 says
-# nothing about having its results.
+# `practice_results` and `tyres` have both left this list. They were absent
+# from Jolpica, which was true, and were treated as absent everywhere -- but
+# "this source does not have it" is not the same claim as "no source has it".
+# FastF1 reads Formula 1 live timing, which carries practice laps, tyre
+# compounds and sector times from 2018. They are now measured below like
+# everything else.
+#
+# What is left has been looked for and genuinely does not exist in anything
+# this project can ingest.
 _ABSENT = [
-    "practice_results",
-    "cars", "engines", "tyres",
+    "cars", "engines",
 ]
 
 
@@ -277,6 +280,39 @@ def _span_for(conn: sqlite3.Connection, sql: str, fallback: str) -> str:
 # which is a materially stronger claim than "internally consistent".
 _VALIDATED = "cross-validated vs Jolpica-F1"
 _STRUCTURAL = "structural (not cross-validated)"
+
+# A SECOND PROVIDER. Its own level, because "structural" would imply these
+# rows sit alongside the Jolpica-derived ones and they do not: different
+# source, different coverage window, separate tables. A reader comparing two
+# numbers needs to know when they came from different places.
+#
+# Not cross-validated and cannot be: nothing else publishes practice timing,
+# so there is no independent record to check it against. What IS checked is
+# internal consistency -- the three sectors must reconstruct the lap.
+_LIVE_TIMING = "FastF1 / F1 live timing (not cross-validated)"
+
+
+def _practice_coverage(conn: sqlite3.Connection) -> str:
+    """Practice coverage as a fraction of sessions, not a season span.
+
+    Same reasoning as lap timings: the fetch is per session and resumable, so
+    a partial load is legitimate and a span would describe the endpoints of a
+    sparse set rather than its coverage.
+    """
+    loaded = conn.execute(
+        "SELECT COUNT(DISTINCT race_id || '-' || session) FROM practice_laps"
+    ).fetchone()[0]
+    if not loaded:
+        return "none loaded"
+    span = _span_for(
+        conn,
+        "SELECT MIN(ra.season), MAX(ra.season) FROM practice_laps p"
+        " JOIN races ra ON ra.id = p.race_id",
+        "unknown",
+    )
+    # 2018 is a source boundary, not a gap: live timing does not exist before.
+    expected = conn.execute("SELECT COUNT(*) * 3 FROM races WHERE season >= 2018").fetchone()[0]
+    return f"{loaded}/{expected} sessions ({span}, 2018 onward only)"
 
 
 def _lap_coverage(conn: sqlite3.Connection) -> str:
@@ -337,6 +373,15 @@ def coverage_matrix(conn: sqlite3.Connection) -> list[dict]:
         # than claim the full window.
         ("lap_times", "SELECT COUNT(*) FROM lap_times",
          _lap_coverage(conn), _STRUCTURAL),
+        # FastF1-sourced. Reported separately from the Jolpica datasets above
+        # because it is a different provider with a different coverage window,
+        # and a reader should be able to see which is which.
+        ("practice_laps", "SELECT COUNT(*) FROM practice_laps",
+         _practice_coverage(conn), _LIVE_TIMING),
+        ("tyre_compounds", "SELECT COUNT(*) FROM practice_laps WHERE compound IS NOT NULL",
+         _practice_coverage(conn), _LIVE_TIMING),
+        ("sector_times", "SELECT COUNT(*) FROM practice_laps WHERE sector1 IS NOT NULL",
+         _practice_coverage(conn), _LIVE_TIMING),
         ("sessions", "SELECT COUNT(*) FROM sessions",
          _span_for(conn,
                    "SELECT MIN(ra.season), MAX(ra.season) FROM sessions s"

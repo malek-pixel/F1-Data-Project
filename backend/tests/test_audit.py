@@ -83,6 +83,11 @@ def test_coverage_uses_only_the_documented_verification_vocabulary(report):
     allowed = {
         audit._VALIDATED,
         audit._STRUCTURAL,
+        # A second provider gets its own level rather than being folded into
+        # "structural", so a reader can tell which rows came from somewhere
+        # else entirely. Added when practice timing was ingested -- and this
+        # test is what caught it being introduced as a loose string.
+        audit._LIVE_TIMING,
         "asset presence only",
         "no source ingested",
     }

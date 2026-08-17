@@ -98,6 +98,8 @@ QUALIFYING_CSV = Path(__file__).resolve().parents[2] / "data" / "jolpica_qualify
 PITSTOPS_CSV = Path(__file__).resolve().parents[2] / "data" / "jolpica_pitstops.csv"
 LAPTIMES_CSV = Path(__file__).resolve().parents[2] / "data" / "jolpica_laptimes.csv"
 SESSIONS_CSV = Path(__file__).resolve().parents[2] / "data" / "jolpica_sessions.csv"
+# FastF1 / F1 live timing, NOT Jolpica. Different source, 2018 onward only.
+PRACTICE_CSV = Path(__file__).resolve().parents[2] / "data" / "fastf1_practice_laps.csv"
 
 # Columns pulled from the enrichment, in the order the INSERT expects them.
 _ENRICHMENT_FIELDS = ("classification", "position_text", "status", "points", "grid", "laps")
@@ -519,6 +521,41 @@ CREATE TABLE sessions (
 -- than "this was never available". See backend/etl/build_sessions.py.
 CREATE INDEX idx_sessions_race ON sessions(race_id);
 
+CREATE TABLE practice_laps (
+    id          INTEGER PRIMARY KEY,
+    race_id     INTEGER NOT NULL REFERENCES races(id),
+    driver_id   INTEGER NOT NULL REFERENCES drivers(id),
+    -- fp1 | fp2 | fp3
+    session     TEXT NOT NULL,
+    lap         INTEGER CHECK (lap > 0),
+    stint       INTEGER CHECK (stint > 0),
+    -- Seconds. NULL where the source timed no lap -- an out-lap, or a lap the
+    -- car did not complete. Never 0, which would be the fastest lap ever set.
+    lap_time    REAL CHECK (lap_time > 0),
+    sector1     REAL CHECK (sector1 > 0),
+    sector2     REAL CHECK (sector2 > 0),
+    sector3     REAL CHECK (sector3 > 0),
+    -- SOFT | MEDIUM | HARD | INTERMEDIATE | WET, as the source names them.
+    compound    TEXT,
+    tyre_life   INTEGER CHECK (tyre_life >= 0),
+    fresh_tyre  INTEGER,
+    speed_trap  REAL CHECK (speed_trap > 0),
+    is_personal_best INTEGER,
+    -- Deleted laps are KEPT and flagged, not dropped. The lap happened, and
+    -- which laps stood is what decides a session's fastest time.
+    deleted     INTEGER NOT NULL DEFAULT 0,
+    UNIQUE (race_id, driver_id, session, lap)
+);
+
+-- SOURCE NOTE: practice_laps comes from FastF1 / Formula 1 live timing, NOT
+-- from Jolpica like every other table here. Different provenance, different
+-- coverage (2018 onward only). It is kept in its own table for exactly that
+-- reason -- blending two sources into one table is how they start disagreeing
+-- without anyone being able to tell which one is wrong.
+CREATE INDEX idx_practice_race    ON practice_laps(race_id, session);
+CREATE INDEX idx_practice_driver  ON practice_laps(driver_id);
+CREATE INDEX idx_practice_fastest ON practice_laps(race_id, session, lap_time);
+
 CREATE TABLE lap_times (
     id          INTEGER PRIMARY KEY,
     race_id     INTEGER NOT NULL REFERENCES races(id),
@@ -753,6 +790,41 @@ def load(rows: list[dict], db_path: Path, report: Report) -> None:
             # would drop out of "fastest lap" silently. Surfaced instead.
             report.add("warning", "unparsed_lap_time", f"{unparsed} lap times have no millisecond value")
         report.counts["lap timings"] = len(lap_payload)
+
+        # Practice laps. A second source (FastF1) and therefore its own table:
+        # blending two providers into one table is how they begin disagreeing
+        # with no way to tell which is wrong.
+        practice_rows = load_dimension_rows(PRACTICE_CSV)
+        practice_payload = []
+        for lap in practice_rows:
+            key = (int(lap["season"]), int(lap["round"]))
+            if key not in races or lap["driver_slug"] not in by_slug:
+                continue
+            practice_payload.append((
+                races[key], by_slug[lap["driver_slug"]], lap["session"],
+                _int_or_none(lap["lap"]), _int_or_none(lap["stint"]),
+                _float_or_none(lap["lap_time"]),
+                _float_or_none(lap["sector1"]),
+                _float_or_none(lap["sector2"]),
+                _float_or_none(lap["sector3"]),
+                _blank_to_none(lap["compound"]),
+                _int_or_none(lap["tyre_life"]),
+                _int_or_none(lap["fresh_tyre"]),
+                _float_or_none(lap["speed_trap"]),
+                _int_or_none(lap["is_personal_best"]),
+                int(lap["deleted"] or 0),
+            ))
+        conn.executemany(
+            """INSERT OR IGNORE INTO practice_laps
+                 (race_id, driver_id, session, lap, stint, lap_time,
+                  sector1, sector2, sector3, compound, tyre_life, fresh_tyre,
+                  speed_trap, is_personal_best, deleted)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            practice_payload,
+        )
+        report.counts["practice laps"] = conn.execute(
+            "SELECT COUNT(*) FROM practice_laps"
+        ).fetchone()[0]
 
         qualifying = load_dimension_rows(QUALIFYING_CSV)
         conn.executemany(

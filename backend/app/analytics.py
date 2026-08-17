@@ -41,8 +41,20 @@ driver contribution (within a constructor)
 --------------------------------------------------------------------------
 ABSENT -- no source supplies these
 --------------------------------------------------------------------------
-    sector times, tyre compounds, telemetry, car and engine specifications,
-    practice classifications.
+    car and engine specifications, telemetry.
+
+PARTIALLY AVAILABLE -- present for some sessions, absent for others
+--------------------------------------------------------------------------
+    Practice laps, tyre compounds and sector times exist for PRACTICE
+    sessions from 2018, via FastF1 (Formula 1 live timing). They do NOT exist
+    for races: the race lap timings come from Jolpica, which publishes a lap
+    time and nothing else -- no compound, no sectors.
+
+    So "do we have tyre data" has two different answers depending on the
+    session, and the distinction is kept rather than averaged into a single
+    yes or no. The two sources also live in separate tables, because blending
+    providers is how they begin disagreeing with no way to tell which is
+    wrong.
 
     The official FASTEST LAP AWARD is also absent: no source publishes which
     driver received it, and since 2019 it carries eligibility rules (a
