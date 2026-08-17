@@ -109,9 +109,22 @@ def fetch_race_laps(season: int, round_: int, refresh: bool = False) -> list[dic
 
 
 def _read_failures() -> dict[str, str]:
-    if FAILURES.exists():
-        return json.loads(FAILURES.read_text(encoding="utf-8"))
-    return {}
+    """Recorded failures, minus any whose data has since been fetched.
+
+    A failure entry outlives the problem it describes: the race gets retried
+    on a later pass and succeeds, but the manifest still names it. Reporting
+    failures for races sitting in the cache is a false alarm, and a status
+    that cannot be trusted is worse than none -- so the manifest is reconciled
+    against what is actually on disk every time it is read.
+    """
+    if not FAILURES.exists():
+        return {}
+    recorded = json.loads(FAILURES.read_text(encoding="utf-8"))
+    return {
+        key: reason
+        for key, reason in recorded.items()
+        if not cache_path(*(int(part) for part in key.split("-"))).exists()
+    }
 
 
 def _write_failures(failures: dict[str, str]) -> None:

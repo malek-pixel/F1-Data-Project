@@ -199,7 +199,23 @@ def _number(value) -> float | None:
 
 
 def _read_failures() -> dict[str, str]:
-    return json.loads(FAILURES.read_text(encoding="utf-8")) if FAILURES.exists() else {}
+    """Recorded failures, minus any whose data has since been fetched.
+
+    A failure entry outlives the problem it describes: retry the session, or
+    recover it another way, and the file still names it. Reporting three
+    failures for sessions that are sitting in the cache is a false alarm, and
+    a status that cannot be trusted is worse than none -- so the manifest is
+    reconciled against what is actually on disk every time it is read.
+    """
+    if not FAILURES.exists():
+        return {}
+    recorded = json.loads(FAILURES.read_text(encoding="utf-8"))
+    live = {}
+    for key, reason in recorded.items():
+        season, round_, code = key.rsplit("-", 2)
+        if not cache_path(int(season), int(round_), code).exists():
+            live[key] = reason
+    return live
 
 
 def _write_failures(failures: dict[str, str]) -> None:
