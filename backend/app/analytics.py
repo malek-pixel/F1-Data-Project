@@ -595,6 +595,39 @@ def sprint_results(conn: sqlite3.Connection, race_id: int) -> list[dict]:
     return [dict(row) for row in rows]
 
 
+def fastest_lap_award(conn: sqlite3.Connection, race_id: int) -> dict | None:
+    """The driver credited with the official fastest lap of a race.
+
+    NOT THE SAME AS `fastest_lap`
+    -----------------------------
+    `fastest_lap` derives the quickest time anyone recorded, from the lap
+    timings. This reads the award the sport actually gave, as published.
+
+    The two can name different drivers, because the award carries eligibility
+    rules a raw minimum does not apply -- a classified finish, and since 2019
+    a top-ten position to score the point. Both are served, separately, and
+    neither is presented as the other.
+
+    None before 2004, where the source publishes no fastest lap at all, and
+    None for a race whose enrichment has not been loaded.
+    """
+    row = conn.execute(
+        """
+        SELECT d.id AS driver_id, d.slug AS driver_slug, d.name AS driver_name,
+               c.id AS constructor_id, c.slug AS constructor_slug, c.name AS constructor_name,
+               r.fastest_lap_number AS lap, r.fastest_lap_time AS time_text,
+               r.fastest_lap_speed  AS average_speed_kph,
+               r.position           AS finish_position
+        FROM results r
+        JOIN drivers d      ON d.id = r.driver_id
+        JOIN constructors c ON c.id = r.constructor_id
+        WHERE r.race_id = ? AND r.fastest_lap_rank = 1
+        """,
+        [race_id],
+    ).fetchone()
+    return dict(row) if row else None
+
+
 def practice_results(conn: sqlite3.Connection, race_id: int, session: str) -> list[dict]:
     """Classification for one practice session: each driver's best valid lap.
 
@@ -809,7 +842,11 @@ def race_results(conn: sqlite3.Connection, race_id: int) -> list[dict]:
                -- Per-row enrichment. Absent from this payload until now, which
                -- is why the race page rendered "no points column" and "no
                -- lap-count column" beside a database that had both.
-               r.grid, r.laps, r.points, r.status, r.classification, r.position_text
+               r.grid, r.laps, r.points, r.status, r.classification, r.position_text,
+               -- The official award. `rank` 1 is the credited driver; this is
+               -- NOT the same as the quickest lap recorded, which is derived
+               -- separately from the lap timings.
+               r.fastest_lap_rank, r.fastest_lap_number, r.fastest_lap_time
         FROM results r
         JOIN drivers d       ON d.id = r.driver_id
         JOIN constructors c  ON c.id = r.constructor_id

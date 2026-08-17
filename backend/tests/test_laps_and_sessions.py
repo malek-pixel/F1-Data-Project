@@ -452,3 +452,68 @@ def test_no_compound_is_the_string_none_or_nan(conn):
         " WHERE compound IN ('None', 'nan', 'NaN', 'NaT', '')"
     ).fetchall()
     assert not bad, f"placeholder text stored as a compound: {[r[0] for r in bad]}"
+
+
+# ---------------------------------------------------------------------------
+# Fastest lap: the AWARD, distinct from the derived quickest lap
+# ---------------------------------------------------------------------------
+
+def test_at_most_one_fastest_lap_award_per_race(conn):
+    """rank 1 identifies exactly one driver.
+
+    Two would mean the enrichment join duplicated a row, which is invisible in
+    a row count and produces a race with two credited drivers.
+    """
+    duplicates = conn.execute(
+        """
+        SELECT ra.season, ra.round, COUNT(*) AS credited
+        FROM results r JOIN races ra ON ra.id = r.race_id
+        WHERE r.fastest_lap_rank = 1
+        GROUP BY r.race_id HAVING credited > 1
+        LIMIT 5
+        """
+    ).fetchall()
+    assert not duplicates, f"more than one credited driver: {[tuple(r) for r in duplicates]}"
+
+
+def test_fastest_lap_award_is_absent_before_2004(conn):
+    """The source publishes no fastest lap before 2004.
+
+    A pre-2004 award would mean the enrichment was joined onto the wrong rows
+    rather than that an older record was found.
+    """
+    early = conn.execute(
+        """
+        SELECT ra.season, ra.round FROM results r
+        JOIN races ra ON ra.id = r.race_id
+        WHERE r.fastest_lap_rank IS NOT NULL AND ra.season < 2004
+        LIMIT 5
+        """
+    ).fetchall()
+    assert not early, f"award recorded before 2004: {[tuple(r) for r in early]}"
+
+
+def test_award_and_derived_quickest_lap_are_not_conflated(conn):
+    """The two must be served as separate facts.
+
+    They can name different drivers: the award requires a classified finish,
+    and since 2019 a top-ten position for the point, whereas the derived value
+    is simply the minimum recorded time. Presenting either under the other's
+    name would be a claim the data does not support.
+    """
+    from fastapi.testclient import TestClient
+
+    from backend.app.main import app
+
+    race = conn.execute(
+        "SELECT race_id FROM lap_times LIMIT 1"
+    ).fetchone()
+    if race is None:
+        pytest.skip("no lap timings loaded yet")
+
+    with TestClient(app) as client:
+        body = client.get(f"/api/races/{race['race_id']}").json()
+
+    assert "fastest_lap_award" in body and "fastest_lap" in body
+    assert body["fastest_lap"]["basis"] != body["fastest_lap_award"]["basis"]
+    assert "not the official award" in body["fastest_lap"]["basis"]

@@ -46,6 +46,9 @@ SEASONS = list(range(2000, 2026))
 FIELDS = [
     "season", "round", "position", "position_text", "classification",
     "status", "points", "grid", "laps",
+    # The official fastest-lap award. Empty before 2004, and empty for any
+    # driver who set no timed lap -- both are real absences, not gaps.
+    "fastest_lap_rank", "fastest_lap_number", "fastest_lap_time", "fastest_lap_speed",
 ]
 
 
@@ -83,6 +86,10 @@ def build() -> list[dict]:
             "points": row["points"],
             "grid": row["grid"],
             "laps": row["laps"],
+            "fastest_lap_rank": row.get("fastest_lap_rank") or "",
+            "fastest_lap_number": row.get("fastest_lap_number") or "",
+            "fastest_lap_time": row.get("fastest_lap_time") or "",
+            "fastest_lap_speed": row.get("fastest_lap_speed") or "",
         })
     out.sort(key=lambda r: (r["season"], r["round"], r["position"]))
     return out

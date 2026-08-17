@@ -125,6 +125,7 @@ def get_race(race_id: int, conn: sqlite3.Connection = Depends(get_db)):
     sprint = analytics.sprint_results(conn, race_id)
     stops = analytics.pit_stops(conn, race_id)
     quickest = analytics.fastest_lap(conn, race_id)
+    award = analytics.fastest_lap_award(conn, race_id)
     practice_codes = analytics.practice_sessions_available(conn, race_id)
 
     return {
@@ -168,6 +169,26 @@ def get_race(race_id: int, conn: sqlite3.Connection = Depends(get_db)):
                 code: analytics.practice_results(conn, race_id, code)
                 for code in practice_codes
             },
+        },
+        # TWO DIFFERENT THINGS, deliberately side by side.
+        #
+        # `fastest_lap_award` is what the sport actually gave, as published.
+        # `fastest_lap` is the quickest time anyone recorded, derived from the
+        # lap timings. They can name different drivers, because the award
+        # applies eligibility rules a raw minimum does not -- a classified
+        # finish, and since 2019 a top-ten position to score the point.
+        #
+        # Serving only one of them would force a reader to assume it was the
+        # other.
+        "fastest_lap_award": {
+            "available": award is not None,
+            "unavailable_reason": None if award else (
+                "The source publishes no fastest lap before 2004."
+                if row["season"] < 2004
+                else "No fastest-lap award recorded for this race."
+            ),
+            "basis": "as awarded by the sport, including eligibility rules",
+            "item": award,
         },
         "fastest_lap": {
             "available": quickest is not None,

@@ -195,6 +195,19 @@ def fetch_season_results(season: int, refresh: bool = False) -> list[dict]:
                     "grid": result.get("grid"),
                     "laps": result.get("laps"),
                     "status": result.get("status"),
+                    # The official fastest-lap AWARD, which this fetcher used
+                    # to discard. `rank` 1 is the driver credited with it --
+                    # which is NOT simply the quickest time, because
+                    # eligibility rules apply. Absent before 2004, and absent
+                    # for any driver who set no timed lap.
+                    "fastest_lap_rank": (result.get("FastestLap") or {}).get("rank"),
+                    "fastest_lap_number": (result.get("FastestLap") or {}).get("lap"),
+                    "fastest_lap_time": (
+                        ((result.get("FastestLap") or {}).get("Time") or {}).get("time")
+                    ),
+                    "fastest_lap_speed": (
+                        ((result.get("FastestLap") or {}).get("AverageSpeed") or {}).get("speed")
+                    ),
                 })
 
         total = int(data["total"])

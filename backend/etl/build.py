@@ -102,7 +102,10 @@ SESSIONS_CSV = Path(__file__).resolve().parents[2] / "data" / "jolpica_sessions.
 PRACTICE_CSV = Path(__file__).resolve().parents[2] / "data" / "fastf1_practice_laps.csv"
 
 # Columns pulled from the enrichment, in the order the INSERT expects them.
-_ENRICHMENT_FIELDS = ("classification", "position_text", "status", "points", "grid", "laps")
+_ENRICHMENT_FIELDS = (
+    "classification", "position_text", "status", "points", "grid", "laps",
+    "fastest_lap_rank", "fastest_lap_number", "fastest_lap_time", "fastest_lap_speed",
+)
 
 
 def load_enrichment() -> dict[tuple[int, int, int], dict[str, str]]:
@@ -153,6 +156,10 @@ def _enrichment_values(enrichment: dict, row: dict) -> tuple:
         float(match["points"]),
         int(match["grid"]),
         int(match["laps"]),
+        _int_or_none(match.get("fastest_lap_rank")),
+        _int_or_none(match.get("fastest_lap_number")),
+        _blank_to_none(match.get("fastest_lap_time")),
+        _float_or_none(match.get("fastest_lap_speed")),
     )
 
 
@@ -449,6 +456,14 @@ CREATE TABLE results (
     points          REAL CHECK (points >= 0),
     -- 0 is a REAL value: a pit lane start. It is not "unknown".
     grid            INTEGER CHECK (grid >= 0),
+    -- The official fastest-lap AWARD, as published. rank 1 is the driver
+    -- credited with it, which is NOT simply the quickest time: eligibility
+    -- rules apply, and since 2019 a top-ten finish is needed for the point.
+    -- NULL before 2004, and NULL for a driver who set no timed lap.
+    fastest_lap_rank   INTEGER CHECK (fastest_lap_rank > 0),
+    fastest_lap_number INTEGER CHECK (fastest_lap_number > 0),
+    fastest_lap_time   TEXT,
+    fastest_lap_speed  REAL CHECK (fastest_lap_speed > 0),
     laps            INTEGER CHECK (laps >= 0),
     UNIQUE (race_id, driver_id)
 );
@@ -711,8 +726,9 @@ def load(rows: list[dict], db_path: Path, report: Report) -> None:
         conn.executemany(
             """INSERT INTO results
                  (race_id, driver_id, constructor_id, position,
-                  classification, position_text, status, points, grid, laps)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                  classification, position_text, status, points, grid, laps,
+                  fastest_lap_rank, fastest_lap_number, fastest_lap_time, fastest_lap_speed)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             [
                 (
                     races[(r["season"], r["round"])],

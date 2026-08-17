@@ -156,6 +156,12 @@ class RaceResult(BaseModel):
         default=None, description="classified | retired | disqualified | withdrawn."
     )
     position_text: str | None = None
+    # The official award, as published. rank 1 is the credited driver, which
+    # is not necessarily whoever set the quickest time -- eligibility rules
+    # apply. NULL before 2004 and for drivers who set no timed lap.
+    fastest_lap_rank: int | None = None
+    fastest_lap_number: int | None = None
+    fastest_lap_time: str | None = None
 
 
 class ErrorResponse(BaseModel):
