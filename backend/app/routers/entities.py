@@ -54,21 +54,32 @@ def list_drivers(
 
 
 @router.get("/drivers/{driver_id}", tags=["drivers"])
-def get_driver(driver_id: int, conn: sqlite3.Connection = Depends(get_db)):
+def get_driver(driver_id: str, conn: sqlite3.Connection = Depends(get_db)):
+    """One driver, addressed by slug ("hamilton") or by legacy integer id.
+
+    `slug` is returned alongside `id` so a client can migrate its links
+    without a second request, and so the payload carries the identifier that
+    is portable between backends.
+    """
     row = fetch_one_or_404(conn, "drivers", driver_id)
     return {
         "id": row["id"],
+        "slug": row["slug"],
         "name": row["name"],
-        "stats": analytics.entity_stats(conn, "driver", driver_id),
-        "constructors": analytics.driver_constructor_history(conn, driver_id),
+        "nationality": row["nationality"],
+        "date_of_birth": row["date_of_birth"],
+        "abbreviation": row["abbreviation"],
+        "permanent_number": row["permanent_number"],
+        "stats": analytics.entity_stats(conn, "driver", row["id"]),
+        "constructors": analytics.driver_constructor_history(conn, row["id"]),
     }
 
 
 @router.get("/drivers/{driver_id}/seasons", response_model=list[schemas.SeasonStats], tags=["drivers"])
-def get_driver_seasons(driver_id: int, conn: sqlite3.Connection = Depends(get_db)):
+def get_driver_seasons(driver_id: str, conn: sqlite3.Connection = Depends(get_db)):
     """Season-by-season block. Powers wins-by-season and average-position charts."""
-    fetch_one_or_404(conn, "drivers", driver_id)
-    return analytics.by_season(conn, "driver", driver_id)
+    row = fetch_one_or_404(conn, "drivers", driver_id)
+    return analytics.by_season(conn, "driver", row["id"])
 
 
 # --------------------------------------------------------------------------
@@ -100,13 +111,16 @@ def list_constructors(
 
 
 @router.get("/constructors/{constructor_id}", tags=["constructors"])
-def get_constructor(constructor_id: int, conn: sqlite3.Connection = Depends(get_db)):
+def get_constructor(constructor_id: str, conn: sqlite3.Connection = Depends(get_db)):
+    """One constructor, addressed by slug ("ferrari") or by legacy integer id."""
     row = fetch_one_or_404(conn, "constructors", constructor_id)
     return {
         "id": row["id"],
+        "slug": row["slug"],
         "name": row["name"],
-        "stats": analytics.entity_stats(conn, "constructor", constructor_id),
-        "seasons": analytics.by_season(conn, "constructor", constructor_id),
+        "nationality": row["nationality"],
+        "stats": analytics.entity_stats(conn, "constructor", row["id"]),
+        "seasons": analytics.by_season(conn, "constructor", row["id"]),
     }
 
 
@@ -116,16 +130,13 @@ def get_constructor(constructor_id: int, conn: sqlite3.Connection = Depends(get_
     tags=["constructors"],
 )
 def get_constructor_drivers(
-    constructor_id: int,
+    constructor_id: str,
     conn: sqlite3.Connection = Depends(get_db),
     season: int | None = Query(None, ge=1950, le=2100),
 ):
-    """Driver contribution: share of the team's entries, wins and podiums.
-
-    Share of *points* is not offered -- the source has no points column.
-    """
-    fetch_one_or_404(conn, "constructors", constructor_id)
-    return analytics.constructor_driver_contribution(conn, constructor_id, season)
+    """Driver contribution: share of the team's entries, wins and podiums."""
+    row = fetch_one_or_404(conn, "constructors", constructor_id)
+    return analytics.constructor_driver_contribution(conn, row["id"], season)
 
 
 # --------------------------------------------------------------------------
@@ -172,13 +183,15 @@ def list_circuits(
 
 
 @router.get("/circuits/{circuit_id}", tags=["circuits"])
-def get_circuit(circuit_id: int, conn: sqlite3.Connection = Depends(get_db)):
+def get_circuit(circuit_id: str, conn: sqlite3.Connection = Depends(get_db)):
+    """One circuit, addressed by slug ("monza") or by legacy integer id."""
     row = fetch_one_or_404(conn, "circuits", circuit_id)
+    resolved = row["id"]
     return {
         **dict(row),
         "has_map": bool(row["has_map"]),
-        "stats": analytics.entity_stats(conn, "circuit", circuit_id),
-        "winners": analytics.circuit_winners(conn, circuit_id),
-        "top_drivers": analytics.leaderboard(conn, "driver", circuit_id=circuit_id, limit=10)["items"],
-        "top_constructors": analytics.leaderboard(conn, "constructor", circuit_id=circuit_id, limit=10)["items"],
+        "stats": analytics.entity_stats(conn, "circuit", resolved),
+        "winners": analytics.circuit_winners(conn, resolved),
+        "top_drivers": analytics.leaderboard(conn, "driver", circuit_id=resolved, limit=10)["items"],
+        "top_constructors": analytics.leaderboard(conn, "constructor", circuit_id=resolved, limit=10)["items"],
     }

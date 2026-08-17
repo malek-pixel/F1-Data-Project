@@ -62,8 +62,75 @@ def test_missing_driver_returns_404_with_structured_detail(client):
 
 def test_driver_detail_includes_constructor_history(client):
     body = client.get("/api/drivers/1").json()
-    assert set(body) == {"id", "name", "stats", "constructors"}
+    assert set(body) == {
+        "id", "slug", "name", "nationality", "date_of_birth",
+        "abbreviation", "permanent_number", "stats", "constructors",
+    }
     assert body["stats"]["entries"] > 0
+
+
+def test_entities_resolve_by_slug_and_legacy_id_identically(client):
+    """The slug and the integer id must address the same row.
+
+    This is the invariant the slug exists to provide. Integer ids are assigned
+    by each store independently, so they are not portable; the slug is. If
+    these two payloads ever diverge, a link built from one key space is
+    silently resolving to a different entity in the other.
+    """
+    for kind in ("drivers", "constructors", "circuits"):
+        by_id = client.get(f"/api/{kind}/1").json()
+        slug = by_id["slug"]
+        assert slug, f"{kind}/1 has no slug"
+        by_slug = client.get(f"/api/{kind}/{slug}").json()
+        assert by_slug == by_id
+
+
+def test_unknown_slug_is_404_not_a_server_error(client):
+    assert client.get("/api/drivers/no-such-driver").status_code == 404
+
+
+def test_list_endpoints_expose_the_portable_identifier(client):
+    """Every listed entity must carry `slug`, not just `id`.
+
+    Worth asserting because the failure mode is silent: a response_model
+    without the field drops it during serialisation, so the SQL can select it,
+    the handler can return it, and the client still never sees it. That is
+    exactly how it broke once. A client that cannot get a slug from a list has
+    to fall back to the non-portable integer id.
+    """
+    for kind in ("drivers", "constructors"):
+        items = client.get(f"/api/{kind}?limit=5").json()["items"]
+        assert items, f"/api/{kind} returned nothing"
+        assert all(item.get("slug") for item in items), f"/api/{kind} items lack slug"
+
+    contributions = client.get("/api/constructors/1/drivers").json()
+    assert all(row.get("driver_slug") for row in contributions)
+
+
+def test_no_computed_stat_is_dropped_before_it_reaches_the_client(client):
+    """What analytics computes is what the API serves.
+
+    A response_model silently discards keys it does not declare. That is a
+    failure with no symptom: the query runs, the handler returns the value,
+    the test suite stays green, and the field is simply missing from the
+    payload. It had already happened to ten fields -- points, dnfs, avg_grid,
+    positions gained, top5/top10 and their rates -- so the ingested points and
+    finishing-status data was being computed on every request and thrown away.
+
+    Comparing the two directly is the only check that catches it, because
+    every layer in isolation looks correct.
+    """
+    from backend.app import analytics
+    from backend.app.db import connect
+
+    conn = connect()
+    try:
+        computed = analytics.leaderboard(conn, "driver", limit=1)["items"][0]
+    finally:
+        conn.close()
+
+    served = client.get("/api/drivers?limit=1").json()["items"][0]
+    assert set(computed) - set(served) == set()
 
 
 def test_driver_seasons_are_ordered(client):

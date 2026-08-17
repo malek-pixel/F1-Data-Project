@@ -165,6 +165,51 @@ def load_dimension(path: Path, key: str) -> dict[str, dict[str, str]]:
         return {r[key]: r for r in csv.DictReader(handle)}
 
 
+def slugify(value: str) -> str:
+    """Fallback identifier for an entity the enrichment does not name.
+
+    Only reached when the optional dimension CSV is absent -- a fresh clone
+    must still build. It is deliberately not the primary source of slugs: a
+    name-derived key changes when the name's punctuation does, whereas the
+    source's own id does not.
+    """
+    folded = strip_accents(value).lower()
+    return "".join(c if c.isalnum() else "_" for c in folded).strip("_")
+
+
+def assign_slugs(
+    names: set[str], detail: dict[str, dict[str, str]], key: str, report: Report
+) -> dict[str, str]:
+    """name -> stable slug, preferring the source's own id over the name.
+
+    WHY THIS EXISTS
+    ---------------
+    Integer primary keys in this project are assigned by enumerating sorted
+    names, and in the Postgres materialisation by a serial sequence in
+    insertion order. Those two orderings are unrelated, so `/drivers/7` has
+    never referred to the same person in both stores. Nothing detected it
+    because nothing ever compared them.
+
+    A slug taken from the upstream source is identical in both, by
+    construction. It is therefore the identity the API exposes, and the
+    integer id is demoted to a join key that never leaves the database.
+
+    Two names sharing a slug would silently merge two entities, so that is
+    fatal rather than a warning.
+    """
+    slugs = {
+        name: _blank_to_none(detail.get(name, {}).get(key)) or slugify(name)
+        for name in names
+    }
+    collisions = defaultdict(list)
+    for name, slug in slugs.items():
+        collisions[slug].append(name)
+    for slug, owners in sorted(collisions.items()):
+        if len(owners) > 1:
+            report.add("fatal", "duplicate_slug", f"{slug!r} claimed by {sorted(owners)}")
+    return slugs
+
+
 def _blank_to_none(value: str | None) -> str | None:
     """"" means the source has no value -- store NULL, never an empty string.
 
@@ -319,7 +364,15 @@ SCHEMA = """
 PRAGMA foreign_keys = ON;
 
 CREATE TABLE drivers (
+    -- Integer id is an internal join key only. It is assigned by ordering
+    -- slugs, so it is stable within a build, but it is NOT the identity the
+    -- API exposes -- see `slug`.
     id      INTEGER PRIMARY KEY,
+    -- The upstream source's own driver id ("hamilton", "max_verstappen").
+    -- This is the public identifier: it is the one value that means the same
+    -- thing in this database and in the Postgres materialisation, because
+    -- neither store invents it.
+    slug    TEXT NOT NULL UNIQUE,
     name    TEXT NOT NULL UNIQUE,
     -- Descriptive data from data/jolpica_drivers.csv. NULL where the source
     -- genuinely has none: 24 drivers predate three-letter codes and 67
@@ -332,6 +385,9 @@ CREATE TABLE drivers (
 
 CREATE TABLE constructors (
     id      INTEGER PRIMARY KEY,
+    -- The source's own constructor id ("ferrari", "red_bull"). Public
+    -- identifier, for the same reason as drivers.slug.
+    slug    TEXT NOT NULL UNIQUE,
     name    TEXT NOT NULL UNIQUE,
     nationality TEXT
 );
@@ -443,6 +499,28 @@ CREATE TABLE sprint_results (
     UNIQUE (race_id, driver_id)
 );
 
+CREATE TABLE lap_times (
+    id          INTEGER PRIMARY KEY,
+    race_id     INTEGER NOT NULL REFERENCES races(id),
+    driver_id   INTEGER NOT NULL REFERENCES drivers(id),
+    lap         INTEGER NOT NULL CHECK (lap > 0),
+    -- Running order at the end of this lap, not the finishing position.
+    position    INTEGER CHECK (position > 0),
+    -- The source's own string, "1:39.019". Kept because it is what was
+    -- published; `time_ms` is derived from it and is what queries sort on.
+    time_text   TEXT NOT NULL,
+    -- NULL only when time_text could not be parsed, which is recorded as a
+    -- build warning rather than silently coerced to 0 -- a zero lap time
+    -- would win every "fastest lap" query ever run.
+    time_ms     INTEGER CHECK (time_ms > 0),
+    UNIQUE (race_id, driver_id, lap)
+);
+
+CREATE INDEX idx_lap_times_race   ON lap_times(race_id);
+CREATE INDEX idx_lap_times_driver ON lap_times(driver_id);
+-- Fastest-lap queries scan by time within a race; this is the covering order.
+CREATE INDEX idx_lap_times_fastest ON lap_times(race_id, time_ms);
+
 CREATE TABLE build_meta (
     key    TEXT PRIMARY KEY,
     value  TEXT NOT NULL
@@ -470,24 +548,44 @@ def load(rows: list[dict], db_path: Path, report: Report) -> None:
     try:
         conn.executescript(SCHEMA)
 
-        drivers = {name: i for i, name in enumerate(sorted({r["driver"] for r in rows}), start=1)}
-        constructors = {name: i for i, name in enumerate(sorted({r["constructor"] for r in rows}), start=1)}
-        circuit_rows = {r["circuit"]["slug"]: r["circuit"] for r in rows}
-        circuits = {slug: i for i, slug in enumerate(sorted(circuit_rows), start=1)}
-
         # Descriptive data, keyed by name. Absent file -> all NULL, which is
         # the honest reading of "this build does not know".
         driver_detail = load_dimension(DRIVERS_CSV, "driver")
         constructor_detail = load_dimension(CONSTRUCTORS_CSV, "constructor")
         circuit_detail = load_dimension(CIRCUITS_CSV, "circuit_key")
 
+        # Integer ids are ordered by *slug*, not by name. Ordering by name
+        # made the id depend on how a locale sorts accented characters, which
+        # is exactly how this store and the Postgres one drifted apart.
+        driver_slugs = assign_slugs(
+            {r["driver"] for r in rows}, driver_detail, "jolpica_driver_id", report
+        )
+        constructor_slugs = assign_slugs(
+            {r["constructor"] for r in rows}, constructor_detail, "jolpica_constructor_id", report
+        )
+        if report.fatal:
+            raise SystemExit(report.render())
+
+        drivers = {
+            name: i
+            for i, name in enumerate(sorted(driver_slugs, key=lambda n: driver_slugs[n]), start=1)
+        }
+        constructors = {
+            name: i
+            for i, name in enumerate(
+                sorted(constructor_slugs, key=lambda n: constructor_slugs[n]), start=1
+            )
+        }
+        circuit_rows = {r["circuit"]["slug"]: r["circuit"] for r in rows}
+        circuits = {slug: i for i, slug in enumerate(sorted(circuit_rows), start=1)}
+
         conn.executemany(
             """INSERT INTO drivers
-                 (id, name, nationality, date_of_birth, abbreviation, permanent_number)
-               VALUES (?, ?, ?, ?, ?, ?)""",
+                 (id, slug, name, nationality, date_of_birth, abbreviation, permanent_number)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
             [
                 (
-                    i, n,
+                    i, driver_slugs[n], n,
                     _blank_to_none(driver_detail.get(n, {}).get("nationality")),
                     _blank_to_none(driver_detail.get(n, {}).get("date_of_birth")),
                     _blank_to_none(driver_detail.get(n, {}).get("abbreviation")),
@@ -497,9 +595,10 @@ def load(rows: list[dict], db_path: Path, report: Report) -> None:
             ],
         )
         conn.executemany(
-            "INSERT INTO constructors (id, name, nationality) VALUES (?, ?, ?)",
+            "INSERT INTO constructors (id, slug, name, nationality) VALUES (?, ?, ?, ?)",
             [
-                (i, n, _blank_to_none(constructor_detail.get(n, {}).get("nationality")))
+                (i, constructor_slugs[n], n,
+                 _blank_to_none(constructor_detail.get(n, {}).get("nationality")))
                 for n, i in constructors.items()
             ],
         )

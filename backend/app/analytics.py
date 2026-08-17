@@ -265,7 +265,7 @@ def constructor_driver_contribution(
     where, params = ("" if season is None else " AND ra.season = ?"), ([] if season is None else [season])
     rows = conn.execute(
         f"""
-        SELECT d.id AS driver_id, d.name AS driver_name, {_STATS_SELECT}
+        SELECT d.id AS driver_id, d.slug AS driver_slug, d.name AS driver_name, {_STATS_SELECT}
         FROM results r
         JOIN races ra   ON ra.id = r.race_id
         JOIN drivers d  ON d.id  = r.driver_id
@@ -286,6 +286,7 @@ def constructor_driver_contribution(
     return [
         {
             "driver_id": row["driver_id"],
+            "driver_slug": row["driver_slug"],
             "driver_name": row["driver_name"],
             **_stats(row),
             "entry_share": share(row["entries"], total_entries),
@@ -386,7 +387,7 @@ def leaderboard(
         params += hidden_params
 
     base = f"""
-        SELECT e.id, e.name, {_STATS_SELECT}
+        SELECT e.id, e.slug, e.name, {_STATS_SELECT}
         FROM results r
         JOIN races ra   ON ra.id = r.race_id
         JOIN {table} e  ON e.id  = {id_column}
@@ -409,7 +410,10 @@ def leaderboard(
         "total": total,
         "limit": limit,
         "offset": offset,
-        "items": [{"id": row["id"], "name": row["name"], **_stats(row)} for row in rows],
+        "items": [
+            {"id": row["id"], "slug": row["slug"], "name": row["name"], **_stats(row)}
+            for row in rows
+        ],
     }
 
 

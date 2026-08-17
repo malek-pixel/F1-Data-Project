@@ -80,10 +80,39 @@ def build_drivers(rows: list[dict]) -> list[dict]:
 
 
 def build_constructors(rows: list[dict]) -> list[dict]:
-    seen: dict[str, str] = {}
+    """Constructor descriptive data, keyed by the source's own stable id.
+
+    The id is committed for the same reason the driver id is: it is the only
+    identifier that means the same thing in both this project's SQLite build
+    and its Postgres materialisation. Integer primary keys are assigned
+    independently by each store -- sorted-name enumeration here, a serial
+    sequence there -- so they cannot be compared across the two. The slug can.
+
+    A constructor mapping to more than one source id would make that key
+    ambiguous, so it fails the build rather than picking one.
+    """
+    seen: dict[str, dict] = {}
+    ids: dict[str, set[str]] = defaultdict(set)
     for row in rows:
-        seen.setdefault(row["constructor"], row["constructor_nationality"] or "")
-    return [{"constructor": k, "nationality": v} for k, v in sorted(seen.items())]
+        seen.setdefault(row["constructor"], row)
+        if row.get("constructor_id"):
+            ids[row["constructor"]].add(row["constructor_id"])
+
+    ambiguous = {name: found for name, found in ids.items() if len(found) > 1}
+    if ambiguous:
+        raise SystemExit(
+            "constructor ids are not one-to-one; refusing to guess:\n"
+            + "\n".join(f"  {name} -> {sorted(found)}" for name, found in ambiguous.items())
+        )
+
+    return [
+        {
+            "constructor": name,
+            "jolpica_constructor_id": next(iter(ids.get(name, {""}))),
+            "nationality": row["constructor_nationality"] or "",
+        }
+        for name, row in sorted(seen.items())
+    ]
 
 
 def fetch_race_circuits(season: int) -> dict[int, dict]:
@@ -162,7 +191,7 @@ def main() -> int:
            ["driver", "jolpica_driver_id", "nationality", "date_of_birth",
             "abbreviation", "permanent_number"])
     _write(DATA / "jolpica_constructors.csv", build_constructors(rows),
-           ["constructor", "nationality"])
+           ["constructor", "jolpica_constructor_id", "nationality"])
 
     db = REPO_ROOT / "data" / "f1.db"
     if not db.exists():

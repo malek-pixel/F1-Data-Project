@@ -10,7 +10,7 @@ import sqlite3
 import pytest
 
 from backend.app import analytics
-from backend.etl.build import SCHEMA
+from backend.etl.build import SCHEMA, slugify as slug
 
 # Two seasons, two races each, three drivers, two constructors.
 #
@@ -36,8 +36,10 @@ def conn() -> sqlite3.Connection:
     drivers = {name: i for i, name in enumerate(["ALICE", "BOB", "CARA"], start=1)}
     constructors = {name: i for i, name in enumerate(["Blue", "Red"], start=1)}
     races = {}
-    db.executemany("INSERT INTO drivers (id, name) VALUES (?, ?)", [(i, n) for n, i in drivers.items()])
-    db.executemany("INSERT INTO constructors (id, name) VALUES (?, ?)", [(i, n) for n, i in constructors.items()])
+    db.executemany("INSERT INTO drivers (id, slug, name) VALUES (?, ?, ?)",
+                   [(i, slug(n), n) for n, i in drivers.items()])
+    db.executemany("INSERT INTO constructors (id, slug, name) VALUES (?, ?, ?)",
+                   [(i, slug(n), n) for n, i in constructors.items()])
 
     for season, rnd, _, _, _ in FIXTURE:
         if (season, rnd) not in races:

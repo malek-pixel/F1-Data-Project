@@ -12,7 +12,13 @@ from pydantic import BaseModel, Field
 class Stats(BaseModel):
     """Canonical stat block. See analytics.py for every definition."""
 
-    entries: int = Field(description="Race classifications. Includes retirements: the source has no status column.")
+    entries: int = Field(
+        description=(
+            "Race classifications, retirements included. Retirements are "
+            "identifiable -- see `results.status` -- but they are entries, so "
+            "they are counted here rather than filtered out."
+        )
+    )
     wins: int
     podiums: int
     win_rate: float | None = Field(description="wins / entries. None when entries = 0, never 0.0-by-default.")
@@ -23,9 +29,50 @@ class Stats(BaseModel):
     best_classified_position: int | None
     rates_reliable: bool = Field(description="False below the minimum entry count; rates are shown but flagged.")
 
+    # ------------------------------------------------------------------
+    # Declared so they are actually served.
+    #
+    # analytics._stats() has computed every field below for some time, but
+    # none of them were declared here -- and an undeclared key is dropped
+    # during response serialisation without warning. The effect was that the
+    # ingested points, finishing-status and grid data never reached any client
+    # through a list endpoint, while the SQL that produced it ran on every
+    # request. Nothing failed; the numbers simply were not there.
+    #
+    # Every one of these is None rather than 0 when the enrichment is absent:
+    # "not known" and "zero" are different claims, and only one of them is
+    # safe to render.
+    # ------------------------------------------------------------------
+    top5: int
+    top10: int
+    top5_rate: float | None
+    top10_rate: float | None
+    finishes: int | None = Field(
+        default=None, description="Classified finishes. None when no status data covers these entries."
+    )
+    dnfs: int | None = Field(
+        default=None, description="Entries that did not reach a classified finish."
+    )
+    dnf_rate: float | None = Field(
+        default=None, description="dnfs / entries carrying a status, never / all entries."
+    )
+    points: float | None = Field(
+        default=None, description="Championship points as scored under the rules of each season."
+    )
+    avg_grid: float | None = Field(
+        default=None, description="Mean starting slot. Pit-lane starts (grid 0) are excluded, not counted as zero."
+    )
+    avg_positions_gained: float | None = Field(
+        default=None, description="Mean grid minus finish, classified finishes only."
+    )
+
 
 class NamedStats(Stats):
     id: int
+    # The portable identifier. `id` is assigned independently by each backing
+    # store and is therefore meaningless across them; `slug` is not. Clients
+    # should link on this.
+    slug: str
     name: str
 
 
@@ -40,6 +87,7 @@ class ConstructorSpell(SeasonStats):
 
 class DriverContribution(Stats):
     driver_id: int
+    driver_slug: str
     driver_name: str
     entry_share: float | None
     win_share: float | None = Field(description="Share of the constructor's wins. None when the team has none.")
