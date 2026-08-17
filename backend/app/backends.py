@@ -52,7 +52,52 @@ SUPABASE_CAPABILITIES = frozenset({
     "teammate_records",
     "records",
     "metric_definitions",
+    # Added once each had a Postgres implementation AND a test comparing its
+    # values against the SQLite answer. Listing an endpoint here without that
+    # comparison would be the "looks complete" failure this set exists to
+    # prevent -- the name would claim support that nothing had exercised.
+    #
+    # Each name is the `supabase_repo` function that implements it, not a
+    # prose label. test_capability_set_is_not_aspirational asserts exactly
+    # that, so a capability cannot be advertised unless something callable
+    # backs it -- which is how the first draft of this list was caught naming
+    # five endpoints that did not exist.
+    "driver_by_slug",
+    "constructor_by_slug",
+    "circuit_by_slug",
+    "driver_seasons",
+    "constructor_seasons",
+    "driver_circuits",
+    "driver_qualifying",
+    "constructor_drivers",
+    "circuits",
+    "seasons",
+    "season",
+    "standings",
+    "races",
+    "race",
+    "leaderboard",
 })
+
+# Endpoints with NO Postgres implementation, and why. Written down because
+# "unsupported" is otherwise indistinguishable from "forgotten", and because
+# each of these is a decision rather than an oversight.
+#
+# Every one of them is a derived analysis that exists only as SQL inside
+# backend/app/analytics.py. Reproducing them as Postgres views would put the
+# same metric in two places, which is the one thing this project's
+# "one definition per metric" rule forbids -- so they stay SQLite-only until
+# the definition itself moves into the database.
+UNIMPLEMENTED_ON_SUPABASE = {
+    "search": "cross-entity search; no view, and PostgREST cannot span tables in one query",
+    "insights": "narrative findings composed from several aggregates in Python",
+    "eras": "era segmentation is a Python-side clustering of season stats",
+    "dominance": "derived concentration measure, defined only in analytics.py",
+    "compare": "pairwise comparison assembled from two stat blocks plus shared-season logic",
+    "distribution": "finishing-position histogram; no view",
+    "cars": "the cars table is empty in both stores -- no source exists",
+    "dataset_summary": "reports on the serving store itself, including which datasets are absent",
+}
 
 
 class BackendUnavailable(RuntimeError):

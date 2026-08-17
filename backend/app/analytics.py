@@ -424,6 +424,12 @@ def leaderboard(
 def standings(conn: sqlite3.Connection, season: int, entity: str = "driver") -> list[dict]:
     """Championship standings for a season. Calculated, never stored.
 
+    Drivers level on points are ordered by wins, then podiums, then name.
+    That is a deterministic tiebreak, NOT the official countback (most wins,
+    then most second places, and so on): it exists so the two backends return
+    one stable order, and it does not adjudicate a real championship tie. The
+    same ordering is applied in supabase_repo.standings.
+
     Race points plus sprint points. Sprints have counted toward the
     championship since 2021, and omitting them made 2021-2025 totals short by
     exactly 7/21/45/38/29 -- which is how the missing sprint dataset was found.
@@ -451,7 +457,7 @@ def standings(conn: sqlite3.Connection, season: int, entity: str = "driver") -> 
               FROM sprint_results s JOIN races ra ON ra.id = s.race_id
              WHERE ra.season = ?
         )
-        SELECT e.id, e.name,
+        SELECT e.id, e.slug, e.name,
                SUM(scored.points)                                   AS points,
                SUM(CASE WHEN scored.position = 1 THEN 1 ELSE 0 END) AS wins,
                SUM(CASE WHEN scored.position <= 3 THEN 1 ELSE 0 END) AS podiums,
@@ -467,6 +473,9 @@ def standings(conn: sqlite3.Connection, season: int, entity: str = "driver") -> 
         {
             "position": index,
             "id": row["id"],
+            # The portable identifier, so a standings row can be linked
+            # without a second lookup and without using the store-local id.
+            "slug": row["slug"],
             "name": row["name"],
             # Points are stored as awarded, so halves survive; trim the float
             # noise without pretending to more precision than exists.

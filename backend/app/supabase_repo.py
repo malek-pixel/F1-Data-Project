@@ -182,3 +182,197 @@ def records() -> list[dict]:
 def metric_definitions() -> list[dict]:
     rows, _ = query("metric_definitions", filters={"active": "eq.true"}, order="metric_key")
     return rows
+
+# ---------------------------------------------------------------------------
+# View-backed endpoints.
+#
+# Every function here selects and filters; none of them calculate. The
+# aggregate is the view's job, which is what keeps a metric defined once per
+# store rather than once per caller.
+#
+# All of them take a `slug`, not an integer id. Integer ids in this database
+# come from a serial sequence and do not match the SQLite build's, so an id
+# accepted here would address a different entity there -- the exact bug the
+# slug was introduced to remove.
+# ---------------------------------------------------------------------------
+
+def _one(resource: str, filters: dict[str, str], order: str | None = None) -> dict | None:
+    rows, _ = query(resource, filters=filters, order=order, limit=1)
+    return rows[0] if rows else None
+
+
+def driver_by_slug(slug: str) -> dict | None:
+    """Career stat block for one driver. None when the slug is unknown."""
+    return _one("v_driver_career_stats", {"driver_slug": f"eq.{slug}"})
+
+
+def constructor_by_slug(slug: str) -> dict | None:
+    return _one("v_constructor_career_stats", {"constructor_slug": f"eq.{slug}"})
+
+
+def circuit_by_slug(slug: str) -> dict | None:
+    return _one("v_circuit_stats", {"circuit_key": f"eq.{slug}"})
+
+
+def driver_seasons(slug: str) -> list[dict]:
+    rows, _ = query(
+        "v_driver_season_stats", filters={"driver_slug": f"eq.{slug}"}, order="season"
+    )
+    return rows
+
+
+def constructor_seasons(slug: str) -> list[dict]:
+    rows, _ = query(
+        "v_constructor_season_stats",
+        filters={"constructor_slug": f"eq.{slug}"},
+        order="season",
+    )
+    return rows
+
+
+def driver_circuits(slug: str) -> list[dict]:
+    rows, _ = query(
+        "v_driver_circuit_stats",
+        filters={"driver_slug": f"eq.{slug}"},
+        order="appearances.desc",
+    )
+    return rows
+
+
+def driver_qualifying(slug: str) -> dict | None:
+    """Qualifying summary.
+
+    `qualifying_p1` is counted qualifying firsts, and is deliberately not
+    called "poles": the two differ, and the field name says what was measured.
+    """
+    return _one("v_driver_qualifying_stats", {"driver_slug": f"eq.{slug}"})
+
+
+def constructor_drivers(slug: str) -> list[dict]:
+    rows, _ = query(
+        "v_constructor_driver_contribution",
+        filters={"constructor_slug": f"eq.{slug}"},
+        order="wins.desc",
+    )
+    return rows
+
+
+def standings(season: int, entity: str = "driver") -> list[dict]:
+    """Championship standings for one season.
+
+    ORDERED EXPLICITLY, NOT BY points_rank
+    --------------------------------------
+    `points_rank` assigns the same rank to drivers on equal points -- correct
+    as a rank, but it leaves the order *within* a tie undefined, so the same
+    query could return two tied drivers either way round. Sorting by it made
+    this disagree with the SQLite implementation on three of four sampled
+    seasons: in 2000, Wurz and de la Rosa both finished on 2 points and both
+    stores ranked them 15th, but listed them in different orders.
+
+    The tiebreak here matches analytics.standings exactly -- points, then
+    wins, then podiums, then name -- so both backends produce one stable
+    order.
+
+    That tiebreak is NOT the official countback (most wins, then most second
+    places, and so on down). Drivers level on points are ordered here for
+    determinism, not adjudicated; the standings do not claim to resolve a real
+    championship tie.
+    """
+    if entity == "driver":
+        resource, name_column = "v_driver_standings", "display_name"
+    else:
+        resource, name_column = "v_constructor_standings", "constructor_name"
+    rows, _ = query(
+        resource,
+        filters={"season": f"eq.{season}"},
+        order=f"points.desc,wins.desc,podiums.desc,{name_column}.asc",
+    )
+    return rows
+
+
+def seasons() -> list[dict]:
+    rows, _ = query("v_season_stats", order="season")
+    return rows
+
+
+def season(year: int) -> dict | None:
+    return _one("v_season_stats", {"season": f"eq.{year}"})
+
+
+def circuits() -> list[dict]:
+    rows, _ = query("v_circuit_stats", order="circuit_name")
+    return rows
+
+
+def races(season_year: int | None = None, limit: int = 50, offset: int = 0) -> tuple[list[dict], int | None]:
+    """Race classifications, optionally one season, paginated.
+
+    Returns the pre-pagination total alongside the page so a list endpoint
+    does not need a second round trip to report it.
+    """
+    filters = {} if season_year is None else {"season": f"eq.{season_year}"}
+    return query(
+        "v_race_results",
+        filters=filters,
+        order="season,round,position",
+        limit=limit,
+        offset=offset,
+        exact_count=True,
+    )
+
+
+def race(season_year: int, round_: int) -> list[dict]:
+    """Full classification for one race, addressed by its natural key.
+
+    (season, round) rather than a race id, for the same reason entities use
+    slugs: race ids are store-local.
+    """
+    rows, _ = query(
+        "v_race_results",
+        filters={"season": f"eq.{season_year}", "round": f"eq.{round_}"},
+        order="position",
+    )
+    return rows
+
+
+_LEADERBOARD_SORTS = {
+    "wins": "wins.desc",
+    "podiums": "podiums.desc",
+    "entries": "entries.desc",
+    "win_rate": "win_rate.desc",
+    "podium_rate": "podium_rate.desc",
+    "avg_position": "avg_classified_position.asc",
+    "name": None,  # resolved per entity below: the name column differs
+    "points": "points.desc",
+}
+
+
+def leaderboard(
+    entity: str = "driver",
+    sort: str = "wins",
+    limit: int = 50,
+    offset: int = 0,
+    min_entries: int = 1,
+) -> tuple[list[dict], int | None]:
+    """Ranked drivers or constructors, sorted and paginated in the database.
+
+    `sort` is resolved through a fixed map, so the order clause can only ever
+    be one of the known strings -- no caller-supplied text reaches the query.
+    """
+    if entity == "driver":
+        resource, name_column = "v_driver_career_stats", "display_name"
+    else:
+        resource, name_column = "v_constructor_career_stats", "constructor_name"
+
+    if sort not in _LEADERBOARD_SORTS:
+        raise SupabaseError(f"unknown sort {sort!r}")
+    order = _LEADERBOARD_SORTS[sort] or f"{name_column}.asc"
+
+    return query(
+        resource,
+        filters={"entries": f"gte.{min_entries}"},
+        order=order,
+        limit=limit,
+        offset=offset,
+        exact_count=True,
+    )
