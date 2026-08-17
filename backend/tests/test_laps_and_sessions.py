@@ -432,9 +432,18 @@ def test_tyre_compounds_are_recorded_as_the_source_names_them(conn):
     # soft/medium/hard relabelling, so the historical set is wider than the
     # current one. These are the source's own names, kept verbatim.
     known = {
+        # Current naming.
         "SOFT", "MEDIUM", "HARD", "INTERMEDIATE", "WET",
+        # 2018-2019 named each compound individually, before the
+        # soft/medium/hard relabelling.
         "HYPERSOFT", "ULTRASOFT", "SUPERSOFT", "SUPERHARD",
-        "UNKNOWN", "TEST_UNKNOWN",
+        # Prototype rubber run in some practice sessions. A real thing the
+        # source reports, not a placeholder -- and found by this test rather
+        # than assumed, which is why the set is pinned instead of pattern
+        # matched.
+        "TEST", "TEST_UNKNOWN",
+        # The source recording that it did not know. Distinct from NULL.
+        "UNKNOWN",
     }
     assert compounds <= known, f"unexpected compound: {compounds - known}"
 
