@@ -595,6 +595,73 @@ def sprint_results(conn: sqlite3.Connection, race_id: int) -> list[dict]:
     return [dict(row) for row in rows]
 
 
+def practice_results(conn: sqlite3.Connection, race_id: int, session: str) -> list[dict]:
+    """Classification for one practice session: each driver's best valid lap.
+
+    DERIVED, NOT PUBLISHED
+    ----------------------
+    No source publishes a practice classification. This is the standard way
+    one is formed -- order drivers by their quickest lap -- and it is computed
+    here rather than stored, so it cannot drift from the laps it summarises.
+
+    DELETED LAPS ARE EXCLUDED
+    Their times were struck off, usually for exceeding track limits, so a
+    deleted lap is not a time the driver is credited with. The laps themselves
+    are kept in `practice_laps` and flagged; only this ranking ignores them.
+    Including them would put drivers ahead on times that did not stand.
+
+    A driver who ran but set no valid time still appears, with a null time and
+    no position. They took part, and omitting them would misreport who was on
+    track.
+    """
+    rows = conn.execute(
+        """
+        SELECT d.id AS driver_id, d.slug AS driver_slug, d.name AS driver_name,
+               MIN(CASE WHEN p.deleted = 0 THEN p.lap_time END) AS best_lap,
+               COUNT(*)                                          AS laps,
+               SUM(CASE WHEN p.deleted = 1 THEN 1 ELSE 0 END)    AS deleted_laps,
+               MAX(p.compound)                                   AS any_compound
+        FROM practice_laps p
+        JOIN drivers d ON d.id = p.driver_id
+        WHERE p.race_id = ? AND p.session = ?
+        GROUP BY d.id
+        ORDER BY best_lap IS NULL, best_lap
+        """,
+        [race_id, session],
+    ).fetchall()
+
+    leader = next((row["best_lap"] for row in rows if row["best_lap"] is not None), None)
+    return [
+        {
+            # None, not a position number, for a driver with no valid time:
+            # they are not "last", they are unranked.
+            "position": index if row["best_lap"] is not None else None,
+            "driver_id": row["driver_id"],
+            "driver_slug": row["driver_slug"],
+            "driver_name": row["driver_name"],
+            "best_lap": row["best_lap"],
+            "gap_to_leader": (
+                round(row["best_lap"] - leader, 3)
+                if row["best_lap"] is not None and leader is not None else None
+            ),
+            "laps": row["laps"],
+            "deleted_laps": row["deleted_laps"],
+        }
+        for index, row in enumerate(rows, start=1)
+    ]
+
+
+def practice_sessions_available(conn: sqlite3.Connection, race_id: int) -> list[str]:
+    """Which practice sessions have laps loaded for this race."""
+    return [
+        row[0]
+        for row in conn.execute(
+            "SELECT DISTINCT session FROM practice_laps WHERE race_id = ? ORDER BY session",
+            [race_id],
+        )
+    ]
+
+
 def fastest_lap(conn: sqlite3.Connection, race_id: int) -> dict | None:
     """The quickest lap of a race, derived from the lap timings.
 

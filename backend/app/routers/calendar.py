@@ -125,6 +125,7 @@ def get_race(race_id: int, conn: sqlite3.Connection = Depends(get_db)):
     sprint = analytics.sprint_results(conn, race_id)
     stops = analytics.pit_stops(conn, race_id)
     quickest = analytics.fastest_lap(conn, race_id)
+    practice_codes = analytics.practice_sessions_available(conn, race_id)
 
     return {
         **dict(row),
@@ -148,6 +149,25 @@ def get_race(race_id: int, conn: sqlite3.Connection = Depends(get_db)):
             "unavailable_reason": None if stops else
                 "Pit stop data begins in 2011; none is recorded for this race.",
             "items": stops,
+        },
+        "practice": {
+            "available": bool(practice_codes),
+            # Two distinct reasons to be empty, and they are different facts.
+            # Before 2018 there is no live timing at all; after it, an absence
+            # means this weekend's sessions are not ingested yet.
+            "unavailable_reason": None if practice_codes else (
+                "Practice timing begins in 2018; none exists for this race."
+                if row["season"] < 2018
+                else "Practice timing has not been ingested for this race."
+            ),
+            # Named for its provenance. Every other block on this payload comes
+            # from Jolpica; this one does not, and a reader comparing a
+            # practice time with a race time should know that.
+            "source": "FastF1 / F1 live timing",
+            "sessions": {
+                code: analytics.practice_results(conn, race_id, code)
+                for code in practice_codes
+            },
         },
         "fastest_lap": {
             "available": quickest is not None,

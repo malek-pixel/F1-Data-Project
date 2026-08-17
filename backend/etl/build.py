@@ -544,6 +544,11 @@ CREATE TABLE practice_laps (
     -- Deleted laps are KEPT and flagged, not dropped. The lap happened, and
     -- which laps stood is what decides a session's fastest time.
     deleted     INTEGER NOT NULL DEFAULT 0,
+    -- The source's own judgement that this lap's timing is self-consistent.
+    -- Inaccurate laps are kept -- they were driven -- but their sectors do
+    -- not necessarily reconstruct the lap time, so any check of that
+    -- invariant filters on this rather than tolerating the mismatch.
+    is_accurate INTEGER NOT NULL DEFAULT 0,
     UNIQUE (race_id, driver_id, session, lap)
 );
 
@@ -813,13 +818,14 @@ def load(rows: list[dict], db_path: Path, report: Report) -> None:
                 _float_or_none(lap["speed_trap"]),
                 _int_or_none(lap["is_personal_best"]),
                 int(lap["deleted"] or 0),
+                int(lap.get("is_accurate") or 0),
             ))
         conn.executemany(
             """INSERT OR IGNORE INTO practice_laps
                  (race_id, driver_id, session, lap, stint, lap_time,
                   sector1, sector2, sector3, compound, tyre_life, fresh_tyre,
-                  speed_trap, is_personal_best, deleted)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                  speed_trap, is_personal_best, deleted, is_accurate)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             practice_payload,
         )
         report.counts["practice laps"] = conn.execute(

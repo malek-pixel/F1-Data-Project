@@ -345,21 +345,44 @@ def test_practice_sector_times_sum_to_the_lap(conn):
     check available: three sectors must reconstruct the lap. A unit error, a
     column swap or a misaligned row all break it.
 
-    The tolerance is 1ms because the source rounds each value independently,
-    so the parts can legitimately miss the whole by a rounding step.
+    Restricted to laps the source itself marks accurate, and that is not a
+    weakening. FastF1 flags laps whose timing does not hang together -- a
+    driver crossing the pit entry mid-lap, a session restart -- and on those
+    the sectors genuinely belong to different portions of track than the lap
+    time covers. One such lap is out by thirty seconds. Checked across a full
+    session, the split is exact: zero mismatches among accurate laps, and
+    every mismatch inaccurate.
+
+    Tolerance is 1ms because the source rounds each value independently, so
+    the parts can miss the whole by a rounding step.
     """
     mismatched = conn.execute(
         """
         SELECT ra.season, ra.round, p.session, p.lap,
                p.lap_time, p.sector1 + p.sector2 + p.sector3 AS summed
         FROM practice_laps p JOIN races ra ON ra.id = p.race_id
-        WHERE p.lap_time IS NOT NULL
+        WHERE p.is_accurate = 1
+          AND p.lap_time IS NOT NULL
           AND p.sector1 IS NOT NULL AND p.sector2 IS NOT NULL AND p.sector3 IS NOT NULL
           AND ABS(p.lap_time - (p.sector1 + p.sector2 + p.sector3)) > 0.001
         LIMIT 5
         """
     ).fetchall()
     assert not mismatched, f"sectors do not reconstruct the lap: {[tuple(r) for r in mismatched]}"
+
+
+def test_inaccurate_laps_are_kept_not_discarded(conn):
+    """A lap the source doubts is still a lap that was driven.
+
+    Dropping them would quietly shrink every driver's lap count and hide the
+    reason. They are stored and flagged so a consumer excludes them
+    deliberately.
+    """
+    if not conn.execute("SELECT COUNT(*) FROM practice_laps").fetchone()[0]:
+        pytest.skip("no practice laps loaded yet")
+    assert conn.execute(
+        "SELECT COUNT(*) FROM practice_laps WHERE is_accurate = 0"
+    ).fetchone()[0] > 0, "no inaccurate laps stored -- are they being dropped?"
 
 
 def test_no_practice_time_is_stored_as_zero(conn):
@@ -405,5 +428,27 @@ def test_tyre_compounds_are_recorded_as_the_source_names_them(conn):
     )}
     if not compounds:
         pytest.skip("no practice laps loaded yet")
-    known = {"SOFT", "MEDIUM", "HARD", "INTERMEDIATE", "WET", "UNKNOWN", "TEST_UNKNOWN"}
+    # The 2018-2019 era named compounds individually before the
+    # soft/medium/hard relabelling, so the historical set is wider than the
+    # current one. These are the source's own names, kept verbatim.
+    known = {
+        "SOFT", "MEDIUM", "HARD", "INTERMEDIATE", "WET",
+        "HYPERSOFT", "ULTRASOFT", "SUPERSOFT", "SUPERHARD",
+        "UNKNOWN", "TEST_UNKNOWN",
+    }
     assert compounds <= known, f"unexpected compound: {compounds - known}"
+
+
+def test_no_compound_is_the_string_none_or_nan(conn):
+    """Missing must be NULL, not the text "None".
+
+    pandas returns the STRINGS "None" and "nan" for absent categorical values,
+    and `value or None` does not catch them -- both are non-empty and
+    therefore truthy. They were being stored as tyre compounds until this was
+    noticed, which would have made "nan" look like a tyre a driver ran.
+    """
+    bad = conn.execute(
+        "SELECT DISTINCT compound FROM practice_laps"
+        " WHERE compound IN ('None', 'nan', 'NaN', 'NaT', '')"
+    ).fetchall()
+    assert not bad, f"placeholder text stored as a compound: {[r[0] for r in bad]}"

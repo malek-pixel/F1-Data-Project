@@ -63,6 +63,8 @@ QUALIFYING_CSV = REPO_ROOT / "data" / "jolpica_qualifying.csv"
 PITSTOPS_CSV = REPO_ROOT / "data" / "jolpica_pitstops.csv"
 SESSIONS_CSV = REPO_ROOT / "data" / "jolpica_sessions.csv"
 LAPTIMES_CSV = REPO_ROOT / "data" / "jolpica_laptimes.csv"
+# FastF1 / F1 live timing -- a different provider, its own table.
+PRACTICE_CSV = REPO_ROOT / "data" / "fastf1_practice_laps.csv"
 CIRCUIT_ASSET_DIR = REPO_ROOT / "frontend" / "public" / "circuits"
 
 DATASET_KEY = "ergast_results"
@@ -712,6 +714,125 @@ def promote_lap_times(conn, report: Report, dataset_id: int) -> None:
                  loaded, f"{loaded} of {len(rows)} source rows")
 
 
+def promote_practice(conn, report: Report, dataset_id: int) -> None:
+    """Load practice-session timing, 2018 onward.
+
+    A SECOND SOURCE. Everything else this script promotes comes from Jolpica;
+    these rows come from FastF1 / F1 live timing, and they land in their own
+    table so the two providers can never be silently blended.
+
+    COPY into a staging table then one set-based INSERT: a full sweep is
+    several hundred thousand laps, and executemany would be a round trip each.
+
+    Joins on `drivers.slug` -- the CSV already carries the slug, resolved at
+    build time from the three-letter code, so no name matching happens here.
+
+    Partial coverage is expected and is not an error: the fetch is resumable
+    per session. A lap whose driver does not resolve IS an error, because it
+    means the two sides disagree about who exists.
+    """
+    if not PRACTICE_CSV.exists():
+        report.check("practice source", "warn", "warning", 0,
+                     "fastf1_practice_laps.csv missing (ingestion not run)")
+        return
+
+    with PRACTICE_CSV.open(newline="", encoding="utf-8") as handle:
+        rows = list(csv.DictReader(handle))
+    report.counts["practice source rows"] = len(rows)
+    if not rows:
+        report.check("practice laps loaded", "warn", "warning", 0, "source file is empty")
+        return
+
+    def number(value):
+        value = (value or "").strip()
+        return float(value) if value else None
+
+    def integer(value):
+        value = (value or "").strip()
+        return int(value) if value else None
+
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            CREATE UNLOGGED TABLE IF NOT EXISTS staging_practice (
+                season int, round int, session text, driver_slug text,
+                lap int, stint int,
+                lap_time numeric, sector1 numeric, sector2 numeric, sector3 numeric,
+                compound text, tyre_life int, fresh_tyre boolean,
+                speed_trap numeric, is_personal_best boolean, deleted boolean,
+                is_accurate boolean
+            )
+            """
+        )
+        cur.execute("TRUNCATE staging_practice")
+        with cur.copy(
+            "COPY staging_practice (season, round, session, driver_slug, lap, stint,"
+            " lap_time, sector1, sector2, sector3, compound, tyre_life, fresh_tyre,"
+            " speed_trap, is_personal_best, deleted, is_accurate) FROM STDIN"
+        ) as copy:
+            for r in rows:
+                copy.write_row((
+                    int(r["season"]), int(r["round"]), r["session"], r["driver_slug"],
+                    integer(r["lap"]), integer(r["stint"]),
+                    number(r["lap_time"]), number(r["sector1"]),
+                    number(r["sector2"]), number(r["sector3"]),
+                    (r["compound"] or "").strip() or None,
+                    integer(r["tyre_life"]),
+                    None if r["fresh_tyre"] == "" else bool(int(r["fresh_tyre"])),
+                    number(r["speed_trap"]),
+                    None if r["is_personal_best"] == "" else bool(int(r["is_personal_best"])),
+                    bool(int(r["deleted"] or 0)),
+                    bool(int(r["is_accurate"] or 0)),
+                ))
+
+        cur.execute(
+            """
+            SELECT DISTINCT st.driver_slug FROM staging_practice st
+            LEFT JOIN drivers d ON d.slug = st.driver_slug
+            WHERE d.id IS NULL LIMIT 5
+            """
+        )
+        unresolved = [r[0] for r in cur.fetchall()]
+        if unresolved:
+            report.check("practice drivers resolve", "fail", "fatal", len(unresolved),
+                         f"unmapped driver slugs: {', '.join(unresolved)}")
+            return
+
+        cur.execute(
+            """
+            INSERT INTO practice_laps
+                (race_id, driver_id, session, lap, stint, lap_time,
+                 sector1, sector2, sector3, compound, tyre_life, fresh_tyre,
+                 speed_trap, is_personal_best, deleted, is_accurate, dataset_id)
+            SELECT ra.id, d.id, st.session, st.lap, st.stint, st.lap_time,
+                   st.sector1, st.sector2, st.sector3, st.compound, st.tyre_life,
+                   st.fresh_tyre, st.speed_trap, st.is_personal_best, st.deleted,
+                   st.is_accurate, %s
+            FROM staging_practice st
+            JOIN seasons s  ON s.year = st.season
+            JOIN races ra   ON ra.season_id = s.id AND ra.round = st.round
+            JOIN drivers d  ON d.slug = st.driver_slug
+            ON CONFLICT (race_id, driver_id, session, lap) DO UPDATE
+              SET lap_time = excluded.lap_time,
+                  sector1 = excluded.sector1, sector2 = excluded.sector2,
+                  sector3 = excluded.sector3, compound = excluded.compound,
+                  tyre_life = excluded.tyre_life, fresh_tyre = excluded.fresh_tyre,
+                  speed_trap = excluded.speed_trap,
+                  is_personal_best = excluded.is_personal_best,
+                  deleted = excluded.deleted,
+                  is_accurate = excluded.is_accurate, updated_at = now()
+            """,
+            (dataset_id,),
+        )
+        cur.execute("SELECT count(*) FROM practice_laps")
+        loaded = cur.fetchone()[0]
+        cur.execute("DROP TABLE staging_practice")
+
+    status = "pass" if loaded == len(rows) else "fail"
+    report.check("practice laps loaded", status, "fatal" if status == "fail" else "info",
+                 loaded, f"{loaded} of {len(rows)} source rows")
+
+
 def promote_qualifying(conn, report: Report, dataset_id: int) -> None:
     """Load qualifying into its own table.
 
@@ -1117,6 +1238,7 @@ def main() -> int:
             promote_pit_stops(conn, report, dataset_id)
             promote_sessions(conn, report, dataset_id)
             promote_lap_times(conn, report, dataset_id)
+            promote_practice(conn, report, dataset_id)
             reconcile(conn, report)
             persist_report(conn, report)
 

@@ -39,7 +39,7 @@ FIELDS = [
     "season", "round", "session", "driver_slug", "lap", "stint",
     "lap_time", "sector1", "sector2", "sector3",
     "compound", "tyre_life", "fresh_tyre", "speed_trap",
-    "is_personal_best", "deleted",
+    "is_personal_best", "deleted", "is_accurate",
 ]
 
 
@@ -99,6 +99,7 @@ def collect(seasons: list[int] | None = None) -> tuple[list[dict], list[str], Co
                     "speed_trap": lap["speed_trap"] or "",
                     "is_personal_best": "" if lap["is_personal_best"] is None else int(lap["is_personal_best"]),
                     "deleted": int(lap["deleted"]),
+                    "is_accurate": int(lap.get("is_accurate", 0)),
                 })
 
     if missing_sessions:

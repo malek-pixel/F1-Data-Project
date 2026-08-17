@@ -214,6 +214,18 @@ def test_season_points_totals_agree(lite, pg):
             " ORDER BY 1,2,3",
         ),
         (
+            "practice_laps",
+            "SELECT ra.season, ra.round, p.session, d.slug, p.lap, p.lap_time,"
+            " p.compound, p.is_accurate, p.deleted"
+            " FROM practice_laps p JOIN races ra ON ra.id = p.race_id"
+            " JOIN drivers d ON d.id = p.driver_id ORDER BY 1,2,3,4,5",
+            "SELECT s.year, ra.round, p.session, d.slug, p.lap, p.lap_time::float8,"
+            " p.compound, p.is_accurate::int, p.deleted::int"
+            " FROM practice_laps p JOIN races ra ON ra.id = p.race_id"
+            " JOIN seasons s ON s.id = ra.season_id"
+            " JOIN drivers d ON d.id = p.driver_id ORDER BY 1,2,3,4,5",
+        ),
+        (
             "lap_times",
             "SELECT ra.season, ra.round, d.slug, l.lap, l.time_ms FROM lap_times l"
             " JOIN races ra ON ra.id = l.race_id JOIN drivers d ON d.id = l.driver_id"

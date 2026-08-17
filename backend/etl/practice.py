@@ -172,7 +172,7 @@ def fetch_session(
             "sector1": _seconds(lap.Sector1Time),
             "sector2": _seconds(lap.Sector2Time),
             "sector3": _seconds(lap.Sector3Time),
-            "compound": getattr(lap, "Compound", None) or None,
+            "compound": _text(getattr(lap, "Compound", None)),
             "tyre_life": int(lap.TyreLife) if lap.TyreLife == lap.TyreLife else None,
             "fresh_tyre": bool(lap.FreshTyre) if lap.FreshTyre == lap.FreshTyre else None,
             "speed_trap": _number(getattr(lap, "SpeedST", None)),
@@ -180,11 +180,30 @@ def fetch_session(
             # A deleted lap is recorded and flagged, never dropped: it happened,
             # and a session's fastest lap depends on knowing which laps stood.
             "deleted": bool(lap.Deleted) if lap.Deleted == lap.Deleted else False,
+            # The source's own judgement on whether this lap's timing hangs
+            # together. Inaccurate laps are KEPT -- they were driven -- but
+            # their sector times do not necessarily reconstruct the lap, so
+            # anything asserting that invariant must filter on this.
+            "is_accurate": bool(lap.IsAccurate) if lap.IsAccurate == lap.IsAccurate else False,
         })
 
     CACHE.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(rows, indent=1, ensure_ascii=False), encoding="utf-8")
     return rows
+
+
+def _text(value) -> str | None:
+    """A source string, or None.
+
+    pandas hands back the STRINGS "None" and "nan" for missing categorical
+    values, not the Python objects. `value or None` does not catch them --
+    both are non-empty and therefore truthy -- so they were being stored as
+    tyre compounds until a test noticed 'nan' among the compound names.
+    """
+    if value is None:
+        return None
+    text = str(value).strip()
+    return None if text in {"", "None", "nan", "NaN", "NaT"} else text
 
 
 def _number(value) -> float | None:
