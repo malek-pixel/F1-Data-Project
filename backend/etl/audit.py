@@ -239,10 +239,37 @@ def run_checks(conn: sqlite3.Connection) -> list[Check]:
 # everything: no value here has been cross-checked against an authoritative
 # F1 source, and saying otherwise would be the claim the brief forbids.
 # ---------------------------------------------------------------------------
+# Datasets with no source at all. Nothing here is a "not yet" -- each one has
+# been looked for and does not exist in anything this project ingests, so the
+# row reports `unavailable` rather than a measured zero.
+#
+# `lap_times` and `sessions` used to be listed here and are not any more. They
+# are now measured below, from row counts, for the same reason the dataset
+# summary stopped hardcoding its own absence list: a hand-maintained list of
+# what is missing becomes a lie the moment someone ingests one of the items
+# and does not think to edit it.
+#
+# `practice_results` stays: the Ergast-compatible source exposes no practice
+# classifications (its /practice, /fp1 and /sessions routes 400 or 404). The
+# weekend timetable IS ingested and is reported separately as `sessions` --
+# the two must not be conflated, because having the schedule of FP1 says
+# nothing about having its results.
 _ABSENT = [
-    "practice", "lap_times",
+    "practice_results",
     "cars", "engines", "tyres",
 ]
+
+
+def _span_for(conn: sqlite3.Connection, sql: str, fallback: str) -> str:
+    """Measured season span of a dataset, e.g. "2011-2025".
+
+    Derived rather than written down. A hardcoded window is a claim that stops
+    being re-checked; this one cannot drift from what was actually loaded.
+    """
+    lo, hi = conn.execute(sql).fetchone()
+    if lo is None:
+        return fallback
+    return f"{lo}-{hi}" if lo != hi else str(lo)
 
 # Cross-validated against Jolpica-F1: all 10,550 rows matched on driver and
 # constructor, and championship totals reproduce the official standings
@@ -250,6 +277,27 @@ _ABSENT = [
 # which is a materially stronger claim than "internally consistent".
 _VALIDATED = "cross-validated vs Jolpica-F1"
 _STRUCTURAL = "structural (not cross-validated)"
+
+
+def _lap_coverage(conn: sqlite3.Connection) -> str:
+    """How much of the race calendar has lap timings, stated as a fraction.
+
+    A span alone would be misleading here. Lap ingestion is a per-race fetch
+    of several thousand requests, so a run can legitimately be half finished,
+    and "2000-2025" would then describe the endpoints of a sparse set rather
+    than its coverage. The fraction is the honest summary.
+    """
+    covered = conn.execute("SELECT COUNT(DISTINCT race_id) FROM lap_times").fetchone()[0]
+    total = conn.execute("SELECT COUNT(*) FROM races").fetchone()[0]
+    if not covered:
+        return "none loaded"
+    span = _span_for(
+        conn,
+        "SELECT MIN(ra.season), MAX(ra.season) FROM lap_times l"
+        " JOIN races ra ON ra.id = l.race_id",
+        "unknown",
+    )
+    return f"{covered}/{total} races ({span})"
 
 
 def coverage_matrix(conn: sqlite3.Connection) -> list[dict]:
@@ -284,6 +332,17 @@ def coverage_matrix(conn: sqlite3.Connection) -> list[dict]:
         ("pit_stops", "SELECT COUNT(*) FROM pit_stops", "2011-" + str(hi), _STRUCTURAL),
         ("circuit_location",
          "SELECT COUNT(*) FROM circuits WHERE latitude IS NOT NULL", span, _STRUCTURAL),
+        # Both spans are measured, not asserted: an interrupted lap fetch
+        # produces genuinely partial coverage, and the row must say so rather
+        # than claim the full window.
+        ("lap_times", "SELECT COUNT(*) FROM lap_times",
+         _lap_coverage(conn), _STRUCTURAL),
+        ("sessions", "SELECT COUNT(*) FROM sessions",
+         _span_for(conn,
+                   "SELECT MIN(ra.season), MAX(ra.season) FROM sessions s"
+                   " JOIN races ra ON ra.id = s.race_id",
+                   "none loaded")
+         + " (weekend timetable only, not practice results)", _STRUCTURAL),
     ]
 
     rows = [

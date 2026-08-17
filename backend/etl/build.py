@@ -96,6 +96,8 @@ ENRICHMENT_CSV = Path(__file__).resolve().parents[2] / "data" / "jolpica_results
 SPRINT_CSV = Path(__file__).resolve().parents[2] / "data" / "jolpica_sprints.csv"
 QUALIFYING_CSV = Path(__file__).resolve().parents[2] / "data" / "jolpica_qualifying.csv"
 PITSTOPS_CSV = Path(__file__).resolve().parents[2] / "data" / "jolpica_pitstops.csv"
+LAPTIMES_CSV = Path(__file__).resolve().parents[2] / "data" / "jolpica_laptimes.csv"
+SESSIONS_CSV = Path(__file__).resolve().parents[2] / "data" / "jolpica_sessions.csv"
 
 # Columns pulled from the enrichment, in the order the INSERT expects them.
 _ENRICHMENT_FIELDS = ("classification", "position_text", "status", "points", "grid", "laps")
@@ -499,6 +501,24 @@ CREATE TABLE sprint_results (
     UNIQUE (race_id, driver_id)
 );
 
+CREATE TABLE sessions (
+    id          INTEGER PRIMARY KEY,
+    race_id     INTEGER NOT NULL REFERENCES races(id),
+    -- fp1 | fp2 | fp3 | sprint_qualifying | sprint | qualifying
+    session     TEXT NOT NULL,
+    date        TEXT NOT NULL,
+    -- NULL for most pre-2018 weekends: the source records the day but not the
+    -- clock time. Absent, not midnight.
+    time        TEXT,
+    UNIQUE (race_id, session)
+);
+
+-- The weekend TIMETABLE only. There is deliberately no practice
+-- classification table: the source has no practice results, and an empty
+-- table named `practice_results` would read as "nobody set a time" rather
+-- than "this was never available". See backend/etl/build_sessions.py.
+CREATE INDEX idx_sessions_race ON sessions(race_id);
+
 CREATE TABLE lap_times (
     id          INTEGER PRIMARY KEY,
     race_id     INTEGER NOT NULL REFERENCES races(id),
@@ -686,6 +706,53 @@ def load(rows: list[dict], db_path: Path, report: Report) -> None:
                 and source_id_to_name.get(s["driver_id"]) in drivers
             ],
         )
+
+        session_rows = load_dimension_rows(SESSIONS_CSV)
+        conn.executemany(
+            "INSERT INTO sessions (race_id, session, date, time) VALUES (?, ?, ?, ?)",
+            [
+                (
+                    races[(int(s["season"]), int(s["round"]))],
+                    s["session"], s["date"], _blank_to_none(s["time"]),
+                )
+                for s in session_rows
+                if (int(s["season"]), int(s["round"])) in races
+            ],
+        )
+        report.counts["weekend sessions"] = conn.execute(
+            "SELECT COUNT(*) FROM sessions"
+        ).fetchone()[0]
+
+        # Lap times join on the driver slug directly -- no name round-trip is
+        # needed now that `drivers.slug` is the source's own id. Optional like
+        # every other enrichment: absent file means an empty table, which is
+        # what "not ingested" should look like.
+        by_slug = {slug: drivers[name] for name, slug in driver_slugs.items()}
+        lap_rows = load_dimension_rows(LAPTIMES_CSV)
+        unparsed = 0
+        lap_payload = []
+        for lap in lap_rows:
+            key = (int(lap["season"]), int(lap["round"]))
+            if key not in races or lap["driver_id"] not in by_slug:
+                continue
+            millis = _int_or_none(lap["time_ms"])
+            if millis is None:
+                unparsed += 1
+            lap_payload.append((
+                races[key], by_slug[lap["driver_id"]], int(lap["lap"]),
+                _int_or_none(lap["position"]), lap["time"], millis,
+            ))
+        conn.executemany(
+            """INSERT INTO lap_times
+                 (race_id, driver_id, lap, position, time_text, time_ms)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            lap_payload,
+        )
+        if unparsed:
+            # A NULL time_ms is invisible to every ordering query, so the row
+            # would drop out of "fastest lap" silently. Surfaced instead.
+            report.add("warning", "unparsed_lap_time", f"{unparsed} lap times have no millisecond value")
+        report.counts["lap timings"] = len(lap_payload)
 
         qualifying = load_dimension_rows(QUALIFYING_CSV)
         conn.executemany(
