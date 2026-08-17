@@ -41,13 +41,18 @@ sleep on its own, then leave it.
 ### Restart them (safe at any time, even if unsure)
 
 ```
-python -u -m backend.etl.fetch_until_done laps
-python -u -m backend.etl.fetch_until_done practice
+python -u -m backend.etl.fetch_until_done practice laps
 ```
 
-Run them in two separate terminals. Each loops until its dataset is complete
-and stops on its own if two passes in a row achieve nothing, so it will not
-spin forever pretending to work.
+**One command, one terminal — do not run the two in parallel.** They look
+independent and are not: FastF1 resolves each event through the same Jolpica
+service the lap fetch uses, so running both starves each of quota. Measured
+directly -- concurrently, lap failures went from 1 to 31 in minutes, while
+practice sat in a six-minute rate-limit wait. Sequentially, both run clean.
+
+The command loops until each dataset is complete and stops on its own if two
+passes in a row achieve nothing, so it will not spin forever pretending to
+work.
 
 ### Make it much faster
 
