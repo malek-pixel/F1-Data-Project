@@ -395,3 +395,42 @@ def test_insights_avoid_causal_language(client):
     for insight in client.get("/api/insights?limit=12").json()["insights"]:
         text = f" {insight['headline']} {insight['detail']} ".lower()
         assert not any(word in text for word in banned), insight["headline"]
+
+
+def test_every_linkable_payload_carries_a_slug(client):
+    """Anywhere the UI renders a link, the portable identifier must be present.
+
+    Without it a client has no choice but to build the link from the integer
+    id, which is store-local: the same URL resolves to a different driver
+    depending on which backend produced it. Race classifications, the
+    round-by-round strip and circuit winners were all missing it, so every
+    link on those pages was necessarily built from the wrong key.
+    """
+    race_id = client.get("/api/races?limit=1").json()[0]["id"]
+
+    results = client.get(f"/api/races/{race_id}").json()["results"]
+    assert results, "race has no classification"
+    assert all(row.get("driver_slug") and row.get("constructor_slug") for row in results)
+
+    season = client.get("/api/seasons").json()[0]["season"]
+    rounds = client.get(f"/api/seasons/{season}/rounds").json()["rounds"]
+    winners = [r for r in rounds if r.get("winner_driver_id") is not None]
+    assert winners, "no round has a recorded winner"
+    assert all(r.get("winner_driver_slug") for r in winners)
+
+    circuit = client.get("/api/circuits").json()[0]
+    detail = client.get(f"/api/circuits/{circuit['slug']}").json()
+    assert detail["winners"], "circuit has no winners"
+    assert all(w.get("driver_slug") for w in detail["winners"])
+
+
+def test_race_list_winner_slug_and_id_are_null_together(client):
+    """A race with no recorded winner must have neither, never one of the two.
+
+    They come from the same LEFT JOIN, so a slug present without an id (or the
+    reverse) would mean the join changed shape and one of the two columns is
+    being read from the wrong row.
+    """
+    for race in client.get("/api/races?limit=200").json():
+        assert (race["winner_driver_id"] is None) == (race["winner_driver_slug"] is None)
+        assert (race["winner_constructor_id"] is None) == (race["winner_constructor_slug"] is None)

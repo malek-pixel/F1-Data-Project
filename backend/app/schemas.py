@@ -82,6 +82,7 @@ class SeasonStats(Stats):
 
 class ConstructorSpell(SeasonStats):
     constructor_id: int
+    constructor_slug: str
     constructor_name: str
 
 
@@ -124,18 +125,24 @@ class Race(BaseModel):
     circuit_name: str
     circuit_slug: str
     winner_driver_id: int | None = None
+    # Null alongside the id, never independently: both come from the same
+    # LEFT JOIN, so a race with no recorded winner has neither.
+    winner_driver_slug: str | None = None
     winner_driver: str | None = Field(
         default=None, description="Null when the source carries no position-1 row for this race."
     )
     winner_constructor_id: int | None = None
+    winner_constructor_slug: str | None = None
     winner_constructor: str | None = None
 
 
 class RaceResult(BaseModel):
     position: int
     driver_id: int
+    driver_slug: str
     driver_name: str
     constructor_id: int
+    constructor_slug: str
     constructor_name: str
 
 

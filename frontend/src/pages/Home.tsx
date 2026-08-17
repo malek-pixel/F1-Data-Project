@@ -154,7 +154,7 @@ export function Home() {
                     <span role="columnheader">GAP</span>
                   </div>
                   {drivers.map((row) => (
-                    <Link key={row.id} to={`/drivers/${row.id}`} className="standings__row" role="row">
+                    <Link key={row.id} to={`/drivers/${row.slug}`} className="standings__row" role="row">
                       <span className="mono standings__rank">{row.position}</span>
                       {/* The mockup colours this bar by the driver's team. The
                           standings payload carries no per-driver constructor,
@@ -193,7 +193,7 @@ export function Home() {
                     <span role="columnheader">GAP</span>
                   </div>
                   {teams.map((row) => (
-                    <Link key={row.id} to={`/constructors/${row.id}`} className="standings__row" role="row">
+                    <Link key={row.id} to={`/constructors/${row.slug}`} className="standings__row" role="row">
                       <span className="mono standings__rank">{row.position}</span>
                       <span className="standings__flag" style={{ background: colourFor(row.name, teamOrder) }} />
                       <span className="standings__name">{row.name}</span>
@@ -288,7 +288,7 @@ export function Home() {
                 {race.results.slice(0, 3).map((entry) => (
                   <li key={entry.driver_id}>
                     <span className="podium__pos mono">P{entry.position}</span>
-                    <Link to={`/drivers/${entry.driver_id}`} className="podium__driver">
+                    <Link to={`/drivers/${entry.driver_slug}`} className="podium__driver">
                       {entry.driver_name}
                     </Link>
                     <span className="podium__team">{entry.constructor_name}</span>

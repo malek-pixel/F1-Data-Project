@@ -249,7 +249,8 @@ def driver_constructor_history(conn: sqlite3.Connection, driver_id: int) -> list
     """
     rows = conn.execute(
         f"""
-        SELECT ra.season, c.id AS constructor_id, c.name AS constructor_name, {_STATS_SELECT}
+        SELECT ra.season, c.id AS constructor_id, c.slug AS constructor_slug,
+               c.name AS constructor_name, {_STATS_SELECT}
         FROM results r
         JOIN races ra        ON ra.id = r.race_id
         JOIN constructors c  ON c.id  = r.constructor_id
@@ -263,6 +264,7 @@ def driver_constructor_history(conn: sqlite3.Connection, driver_id: int) -> list
         {
             "season": row["season"],
             "constructor_id": row["constructor_id"],
+            "constructor_slug": row["constructor_slug"],
             "constructor_name": row["constructor_name"],
             **_stats(row),
         }
@@ -680,8 +682,9 @@ def race_results(conn: sqlite3.Connection, race_id: int) -> list[dict]:
     """Full classification for one race, in classification order."""
     rows = conn.execute(
         """
-        SELECT r.position, d.id AS driver_id, d.name AS driver_name,
-               c.id AS constructor_id, c.name AS constructor_name
+        SELECT r.position,
+               d.id AS driver_id, d.slug AS driver_slug, d.name AS driver_name,
+               c.id AS constructor_id, c.slug AS constructor_slug, c.name AS constructor_name
         FROM results r
         JOIN drivers d       ON d.id = r.driver_id
         JOIN constructors c  ON c.id = r.constructor_id
@@ -709,8 +712,10 @@ def season_rounds(conn: sqlite3.Connection, season: int) -> list[dict]:
         """
         SELECT ra.id AS race_id, ra.round, ra.name AS race_name, ra.date,
                ci.name AS circuit_name, ci.slug AS circuit_slug,
-               d.id  AS winner_driver_id,      d.name AS winner_driver,
-               c.id  AS winner_constructor_id, c.name AS winner_constructor
+               d.id  AS winner_driver_id,      d.slug AS winner_driver_slug,
+               d.name AS winner_driver,
+               c.id  AS winner_constructor_id, c.slug AS winner_constructor_slug,
+               c.name AS winner_constructor
         FROM races ra
         JOIN circuits ci        ON ci.id = ra.circuit_id
         LEFT JOIN results r     ON r.race_id = ra.id AND r.position = 1
@@ -735,8 +740,8 @@ def circuit_winners(conn: sqlite3.Connection, circuit_id: int) -> list[dict]:
     rows = conn.execute(
         """
         SELECT ra.season, ra.id AS race_id, ra.name AS race_name,
-               d.id AS driver_id, d.name AS driver_name,
-               c.id AS constructor_id, c.name AS constructor_name
+               d.id AS driver_id, d.slug AS driver_slug, d.name AS driver_name,
+               c.id AS constructor_id, c.slug AS constructor_slug, c.name AS constructor_name
         FROM results r
         JOIN races ra        ON ra.id = r.race_id
         JOIN drivers d       ON d.id  = r.driver_id

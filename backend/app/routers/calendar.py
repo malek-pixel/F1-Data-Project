@@ -16,8 +16,10 @@ router = APIRouter()
 RACE_SELECT = """
     SELECT ra.id, ra.season, ra.round, ra.name, ra.date,
            ra.circuit_id, ci.name AS circuit_name, ci.slug AS circuit_slug,
-           d.id AS winner_driver_id, d.name AS winner_driver,
-           c.id AS winner_constructor_id, c.name AS winner_constructor
+           d.id AS winner_driver_id, d.slug AS winner_driver_slug,
+           d.name AS winner_driver,
+           c.id AS winner_constructor_id, c.slug AS winner_constructor_slug,
+           c.name AS winner_constructor
     FROM races ra
     JOIN circuits ci        ON ci.id = ra.circuit_id
     LEFT JOIN results r     ON r.race_id = ra.id AND r.position = 1

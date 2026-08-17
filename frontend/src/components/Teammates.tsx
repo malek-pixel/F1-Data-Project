@@ -82,13 +82,13 @@ export function TeammateSection({ driverId, driverName }: { driverId: number | s
                     key: "mate",
                     header: "Teammate",
                     render: (r) => (
-                      <Link to={`/drivers/${r.teammate_id}`}>{r.teammate_name}</Link>
+                      <Link to={`/drivers/${r.teammate_slug}`}>{r.teammate_name}</Link>
                     ),
                   },
                   {
                     key: "team",
                     header: "Constructor",
-                    render: (r) => <Link to={`/constructors/${r.constructor_id}`}>{r.constructor_name}</Link>,
+                    render: (r) => <Link to={`/constructors/${r.constructor_slug}`}>{r.constructor_name}</Link>,
                   },
                   {
                     key: "seasons",

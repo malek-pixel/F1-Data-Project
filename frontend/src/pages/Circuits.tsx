@@ -17,6 +17,7 @@ const MotionCard = motion.create(Link);
 
 interface Specialist {
   driver_id: number;
+  driver_slug: string;
   driver_name: string;
   appearances: number;
   wins: number;
@@ -50,7 +51,7 @@ function SpecialistsSection({ circuitId, circuitName }: { circuitId: number; cir
               rowKey={(row) => row.driver_id}
               emptyMessage={`No driver has at least ${data.min_appearances} appearances here.`}
               columns={[
-                { key: "d", header: "Driver", render: (r) => <Link to={`/drivers/${r.driver_id}`}>{r.driver_name}</Link> },
+                { key: "d", header: "Driver", render: (r) => <Link to={`/drivers/${r.driver_slug}`}>{r.driver_name}</Link> },
                 { key: "a", header: "Starts", numeric: true, render: (r) => num(r.appearances) },
                 { key: "w", header: "Wins", numeric: true, render: (r) => num(r.wins) },
                 { key: "h", header: "Avg here", numeric: true, render: (r) => dec(r.avg_here) },
@@ -311,12 +312,12 @@ export function CircuitDetail() {
                 {
                   key: "driver",
                   header: "Winner",
-                  render: (r) => <Link to={`/drivers/${r.driver_id}`}>{r.driver_name}</Link>,
+                  render: (r) => <Link to={`/drivers/${r.driver_slug}`}>{r.driver_name}</Link>,
                 },
                 {
                   key: "team",
                   header: "Constructor",
-                  render: (r) => <Link to={`/constructors/${r.constructor_id}`}>{r.constructor_name}</Link>,
+                  render: (r) => <Link to={`/constructors/${r.constructor_slug}`}>{r.constructor_name}</Link>,
                 },
               ]}
             />

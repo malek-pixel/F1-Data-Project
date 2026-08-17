@@ -177,7 +177,7 @@ export function DriverDetail() {
               {
                 key: "team",
                 header: "Constructor",
-                render: (r) => <Link to={`/constructors/${r.constructor_id}`}>{r.constructor_name}</Link>,
+                render: (r) => <Link to={`/constructors/${r.constructor_slug}`}>{r.constructor_name}</Link>,
               },
               { key: "entries", header: "Entries", numeric: true, render: (r) => num(r.entries) },
               { key: "wins", header: "Wins", numeric: true, render: (r) => num(r.wins) },

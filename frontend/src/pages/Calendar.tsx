@@ -340,7 +340,7 @@ export function SeasonDetail() {
                     header: "Winner",
                     render: (r) =>
                       r.winner_driver ? (
-                        <Link to={`/drivers/${r.winner_driver_id}`}>{r.winner_driver}</Link>
+                        <Link to={`/drivers/${r.winner_driver_slug}`}>{r.winner_driver}</Link>
                       ) : (
                         <PendingValue title="No recorded winner for this race" />
                       ),
@@ -522,7 +522,7 @@ export function RaceIndex() {
                     header: "Winner",
                     render: (r) =>
                       r.winner_driver ? (
-                        <Link to={`/drivers/${r.winner_driver_id}`}>{r.winner_driver}</Link>
+                        <Link to={`/drivers/${r.winner_driver_slug}`}>{r.winner_driver}</Link>
                       ) : (
                         <PendingValue title="No recorded winner for this race" />
                       ),
@@ -532,7 +532,7 @@ export function RaceIndex() {
                     header: "Constr.",
                     render: (r) =>
                       r.winner_constructor ? (
-                        <Link to={`/constructors/${r.winner_constructor_id}`}>{r.winner_constructor}</Link>
+                        <Link to={`/constructors/${r.winner_constructor_slug}`}>{r.winner_constructor}</Link>
                       ) : (
                         <PendingValue />
                       ),
@@ -608,7 +608,7 @@ export function RaceDetail() {
                   {race.results.slice(0, 3).map((entry) => (
                     <li key={entry.driver_id}>
                       <span className="podium__pos mono">P{entry.position}</span>
-                      <Link to={`/drivers/${entry.driver_id}`} className="podium__driver">
+                      <Link to={`/drivers/${entry.driver_slug}`} className="podium__driver">
                         {entry.driver_name}
                       </Link>
                       <span className="podium__team">{entry.constructor_name}</span>
@@ -660,12 +660,12 @@ export function RaceDetail() {
                 {
                   key: "driver",
                   header: "Driver",
-                  render: (r) => <Link to={`/drivers/${r.driver_id}`}>{r.driver_name}</Link>,
+                  render: (r) => <Link to={`/drivers/${r.driver_slug}`}>{r.driver_name}</Link>,
                 },
                 {
                   key: "team",
                   header: "Constructor",
-                  render: (r) => <Link to={`/constructors/${r.constructor_id}`}>{r.constructor_name}</Link>,
+                  render: (r) => <Link to={`/constructors/${r.constructor_slug}`}>{r.constructor_name}</Link>,
                 },
                 { key: "grid", header: "Grid", render: () => <PendingValue title="No grid column in the source" /> },
                 {
@@ -695,8 +695,8 @@ export function RaceDetail() {
             <Link to={`/circuits/${race.circuit_id}`}>{race.circuit_name} →</Link>
             {race.results[0] && (
               <>
-                <Link to={`/drivers/${race.results[0].driver_id}`}>{race.results[0].driver_name} →</Link>
-                <Link to={`/constructors/${race.results[0].constructor_id}`}>
+                <Link to={`/drivers/${race.results[0].driver_slug}`}>{race.results[0].driver_name} →</Link>
+                <Link to={`/constructors/${race.results[0].constructor_slug}`}>
                   {race.results[0].constructor_name} →
                 </Link>
               </>

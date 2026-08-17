@@ -143,7 +143,7 @@ export function ConstructorDetail() {
                       {
                         key: "driver",
                         header: "Driver",
-                        render: (row) => <Link to={`/drivers/${row.driver_id}`}>{row.driver_name}</Link>,
+                        render: (row) => <Link to={`/drivers/${row.driver_slug}`}>{row.driver_name}</Link>,
                       },
                       { key: "entries", header: "Entries", numeric: true, render: (r) => num(r.entries) },
                       { key: "wins", header: "Wins", numeric: true, render: (r) => num(r.wins) },

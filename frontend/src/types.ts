@@ -46,11 +46,13 @@ export interface SeasonStats extends Stats {
 
 export interface ConstructorSpell extends SeasonStats {
   constructor_id: number;
+  constructor_slug: string;
   constructor_name: string;
 }
 
 export interface DriverContribution extends Stats {
   driver_id: number;
+  driver_slug: string;
   driver_name: string;
   entry_share: number | null;
   win_share: number | null;
@@ -87,8 +89,10 @@ export interface CircuitWinner {
   race_id: number;
   race_name: string;
   driver_id: number;
+  driver_slug: string;
   driver_name: string;
   constructor_id: number;
+  constructor_slug: string;
   constructor_name: string;
 }
 
@@ -103,16 +107,24 @@ export interface Race {
   circuit_slug: string;
   /** Null when the source carries no position-1 row for this race. */
   winner_driver_id: number | null;
+  /** Portable identifier. Link on this, not on the numeric id: ids are
+   *  assigned per data store, so the same number means a different driver
+   *  depending on which backend served the request. Null together with the
+   *  id -- both come from the same optional join. */
+  winner_driver_slug: string | null;
   winner_driver: string | null;
   winner_constructor_id: number | null;
+  winner_constructor_slug: string | null;
   winner_constructor: string | null;
 }
 
 export interface RaceResult {
   position: number;
   driver_id: number;
+  driver_slug: string;
   driver_name: string;
   constructor_id: number;
+  constructor_slug: string;
   constructor_name: string;
 }
 
@@ -126,8 +138,10 @@ export interface SeasonRound {
   circuit_name: string;
   circuit_slug: string;
   winner_driver_id: number | null;
+  winner_driver_slug: string | null;
   winner_driver: string | null;
   winner_constructor_id: number | null;
+  winner_constructor_slug: string | null;
   winner_constructor: string | null;
 }
 
@@ -210,6 +224,8 @@ export interface ConstructorDetail {
 export interface StandingsRow {
   position: number;
   id: number;
+  /** Portable identifier -- link on this, not on `id`. */
+  slug: string;
   name: string;
   points: number | null;
   wins: number;
@@ -340,8 +356,10 @@ export interface Distribution {
 
 export interface TeammateSpell {
   teammate_id: number;
+  teammate_slug: string;
   teammate_name: string;
   constructor_id: number;
+  constructor_slug: string;
   constructor_name: string;
   seasons: number[];
   shared_races: number;

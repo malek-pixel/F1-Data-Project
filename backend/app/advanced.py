@@ -312,8 +312,10 @@ def teammate_records(conn: sqlite3.Connection, driver_id: int) -> list[dict]:
     """
     rows = conn.execute(
         """
-        SELECT me.race_id, ra.season, me.constructor_id, co.name AS constructor_name,
-               me.position AS my_pos, mate.driver_id AS mate_id, d.name AS mate_name,
+        SELECT me.race_id, ra.season, me.constructor_id, co.slug AS constructor_slug,
+               co.name AS constructor_name,
+               me.position AS my_pos, mate.driver_id AS mate_id,
+               d.slug AS mate_slug, d.name AS mate_name,
                mate.position AS mate_pos
         FROM results me
         JOIN results mate
@@ -336,8 +338,10 @@ def teammate_records(conn: sqlite3.Connection, driver_id: int) -> list[dict]:
             key,
             {
                 "teammate_id": row["mate_id"],
+                "teammate_slug": row["mate_slug"],
                 "teammate_name": row["mate_name"],
                 "constructor_id": row["constructor_id"],
+                "constructor_slug": row["constructor_slug"],
                 "constructor_name": row["constructor_name"],
                 "shared_races": 0,
                 "ahead": 0,
@@ -366,8 +370,10 @@ def teammate_records(conn: sqlite3.Connection, driver_id: int) -> list[dict]:
         out.append(
             {
                 "teammate_id": spell["teammate_id"],
+                "teammate_slug": spell["teammate_slug"],
                 "teammate_name": spell["teammate_name"],
                 "constructor_id": spell["constructor_id"],
+                "constructor_slug": spell["constructor_slug"],
                 "constructor_name": spell["constructor_name"],
                 "seasons": sorted(spell["seasons"]),
                 "shared_races": n,
@@ -479,7 +485,7 @@ def circuit_specialists(conn: sqlite3.Connection, circuit_id: int,
     """
     rows = conn.execute(
         """
-        SELECT d.id, d.name,
+        SELECT d.id, d.slug, d.name,
                COUNT(*) AS appearances,
                SUM(CASE WHEN r.position  = 1 THEN 1 ELSE 0 END) AS wins,
                SUM(CASE WHEN r.position <= 3 THEN 1 ELSE 0 END) AS podiums,
@@ -498,6 +504,7 @@ def circuit_specialists(conn: sqlite3.Connection, circuit_id: int,
     return [
         {
             "driver_id": row["id"],
+            "driver_slug": row["slug"],
             "driver_name": row["name"],
             "appearances": row["appearances"],
             "wins": row["wins"],
