@@ -37,7 +37,7 @@ The source is seven columns. These are absent and are **never** estimated:
 
 Two consequences worth stating up front:
 
-1. **`position` is classification order, not finishing status.** There is no status column, so a driver who retired on lap 1 still carries a classification number. The metric is therefore *average classified position*, never "average finish", and DNF rate is not computed.
+1. **`position` is classification order, not finishing status.** A driver who retired on lap 1 still carries a classification number, so the metric is *average classified position*, never "average finish". Retirements are identifiable via `status` / `classification`, and DNF rate is computed and reported alongside it.
 2. **Season tables rank by wins, not points.** They are not championship standings, and every screen that shows one says so.
 
 The Car Library page ships as an honest empty shell: no car data exists in the

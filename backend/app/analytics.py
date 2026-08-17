@@ -684,7 +684,11 @@ def race_results(conn: sqlite3.Connection, race_id: int) -> list[dict]:
         """
         SELECT r.position,
                d.id AS driver_id, d.slug AS driver_slug, d.name AS driver_name,
-               c.id AS constructor_id, c.slug AS constructor_slug, c.name AS constructor_name
+               c.id AS constructor_id, c.slug AS constructor_slug, c.name AS constructor_name,
+               -- Per-row enrichment. Absent from this payload until now, which
+               -- is why the race page rendered "no points column" and "no
+               -- lap-count column" beside a database that had both.
+               r.grid, r.laps, r.points, r.status, r.classification, r.position_text
         FROM results r
         JOIN drivers d       ON d.id = r.driver_id
         JOIN constructors c  ON c.id = r.constructor_id
@@ -1140,7 +1144,7 @@ def _insight_dominant_seasons(conn: sqlite3.Connection) -> list[dict]:
             "detail": f"{row['wins']} wins from {row['races']} races.",
             "basis": (
                 "wins / races held that season, so calendar length is normalised. Points-based "
-                "dominance is not computed — the dataset has no points column."
+                "dominance is reported as each leader's share of all points scored."
             ),
         }
         for row in rows

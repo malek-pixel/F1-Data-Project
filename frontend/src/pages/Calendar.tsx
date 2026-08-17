@@ -314,7 +314,7 @@ export function SeasonDetail() {
                     key: "pts",
                     header: "Pts",
                     numeric: true,
-                    render: () => <PendingValue title="No points column in results.csv" />,
+                    render: (r) => dec(r.points),
                   },
                 ]}
               />
@@ -595,8 +595,16 @@ export function RaceDetail() {
                 note={race.results[0]?.constructor_name}
               />
               <PendingCell label="DISTANCE" why="No race-distance column in the source" />
-              <PendingCell label="LAPS" why="No lap-count column in the source" />
-              <PendingCell label="STARTERS" why="No status column: non-starters cannot be told apart" />
+              <Cell
+                label="LAPS"
+                value={num(race.results[0]?.laps ?? null)}
+                note="Completed by the winner"
+              />
+              <Cell
+                label="CLASSIFIED"
+                value={`${race.results.filter((r) => r.classification === "classified").length} of ${race.results.length}`}
+                note="Reached a classified finish"
+              />
             </CellGrid>
           </Panel>
 
@@ -621,20 +629,28 @@ export function RaceDetail() {
               </div>
             </div>
             <div className="split__pane">
-              <PaneHead title="Not recorded for this race" meta="WOULD NEED NEW SOURCE COLUMNS" />
+              <PaneHead title="Race summary" meta="COUNTED FROM THE CLASSIFICATION" />
               <CellGrid cols={2}>
-                <PendingCell label="POLE POSITION" why="No qualifying data in the source" />
-                <PendingCell label="FASTEST LAP" why="No fastest-lap column in the source" />
-                <PendingCell label="POINTS AWARDED" why="No points column in the source" />
-                <PendingCell label="RETIREMENTS" why="No finishing-status column; retirements are ranked, not flagged" />
+                <Cell
+                  label="POINTS AWARDED"
+                  value={dec(race.results.reduce((sum, r) => sum + (r.points ?? 0), 0))}
+                  note="Race only; sprint points are listed separately"
+                />
+                <Cell
+                  label="RETIREMENTS"
+                  value={num(race.results.filter((r) => r.classification && r.classification !== "classified").length)}
+                  note="Did not reach a classified finish"
+                />
+                <PendingCell label="FASTEST LAP" why="No source records the fastest lap of a race" />
+                <PendingCell label="TYRE STRATEGY" why="No source supplies tyre compounds" />
               </CellGrid>
             </div>
           </div>
 
           <p className="note-line">
             <Badge tone="warning">Classification order</Badge> Positions are the final classification, which
-            includes retirements. The source has no status column, so a retirement cannot be distinguished from a
-            finish.
+            includes retirements — a car that stopped on lap 1 still holds a position. The `status` column
+            says which is which, so a retirement is distinguishable from a finish.
           </p>
 
           <Panel>
@@ -677,7 +693,7 @@ export function RaceDetail() {
                   key: "pts",
                   header: "Pts",
                   numeric: true,
-                  render: () => <PendingValue title="No points column in the source" />,
+                  render: (r) => dec(r.points),
                 },
                 {
                   key: "status",

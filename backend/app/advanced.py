@@ -70,7 +70,7 @@ METRICS: list[dict] = [
         "definition": (
             "One classified race entry. The denominator for every rate in this application."
         ),
-        "edge_cases": "No status column exists, so a lap-1 retirement counts as an entry.",
+        "edge_cases": "A lap-1 retirement counts as an entry: an entry is a start, however it ended.",
         "limitations": "Not a count of finishes. Entries cannot be split into finishes and retirements.",
         "min_sample": None,
     },
@@ -306,7 +306,7 @@ def teammate_records(conn: sqlite3.Connection, driver_id: int) -> list[dict]:
     different years and those spells are not one sample.
 
     LIMITATION (important)
-    With no status column, a retirement is simply a poor classification, so
+    In this metric a retirement is simply a poor classification, so
     mechanical failures count as head-to-head losses. This measures who was
     classified ahead, not who was quicker.
     """

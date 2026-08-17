@@ -70,10 +70,22 @@ describe("Unavailable", () => {
 
   it("lists every unsupported metric explicitly", () => {
     render(<UnavailableMetrics />);
-    for (const label of ["POLE RATE", "FASTEST LAPS", "DNF RATE", "POINTS / RACE"]) {
+    for (const label of ["FASTEST LAPS", "LAP TIMES", "TYRE COMPOUND", "CAR / ENGINE SPEC"]) {
       expect(screen.getByText(label)).toBeInTheDocument();
     }
     expect(screen.getAllByText("Not available in dataset")).toHaveLength(4);
+  });
+
+  it("never lists a metric the dataset actually has", () => {
+    // This panel claimed POLE RATE, DNF RATE and POINTS / RACE were missing
+    // for a long time after all three were ingested, so the UI told users a
+    // column was absent while the API was serving it. These labels are the
+    // specific ones that were wrong; none may come back without the data
+    // going away first.
+    render(<UnavailableMetrics />);
+    for (const label of ["POLE RATE", "DNF RATE", "POINTS / RACE", "POINTS", "GRID"]) {
+      expect(screen.queryByText(label)).not.toBeInTheDocument();
+    }
   });
 });
 

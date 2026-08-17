@@ -144,6 +144,18 @@ class RaceResult(BaseModel):
     constructor_id: int
     constructor_slug: str
     constructor_name: str
+    # Nullable because a build without the enrichment CSV has none of these.
+    # Null means "not known for this row", never zero.
+    grid: int | None = Field(default=None, description="Starting slot. 0 is a real value: a pit-lane start.")
+    laps: int | None = None
+    points: float | None = Field(default=None, description="Points awarded under that season's rules.")
+    status: str | None = Field(
+        default=None, description="Raw source status ('Finished', '+1 Lap', 'Gearbox', ...). Not bucketed."
+    )
+    classification: str | None = Field(
+        default=None, description="classified | retired | disqualified | withdrawn."
+    )
+    position_text: str | None = None
 
 
 class ErrorResponse(BaseModel):

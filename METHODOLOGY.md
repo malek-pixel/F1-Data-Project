@@ -61,7 +61,7 @@ What the design asks for, versus what seven columns can support.
 
 | Design element | What it actually is | Why |
 |---|---|---|
-| Season "standings" | **Wins-based ranking** (wins → podiums → avg position) | No points column, so real championship order cannot be reproduced. The API returns `ranking_basis: "wins"` and clients must label it. |
+| Season "standings" | **Both are returned.** `standings` is the real championship (points, race + sprint); `drivers[]`/`constructors[]` stay wins-ordered with `ranking_basis: "wins"` | The two answer different questions: a driver can lead on wins without winning the title. Clients must label the wins-ordered tables. |
 | "Average finishing position" | **Average classified position** | Retirements are ranked, not flagged |
 | Driver contribution to team | Share of **entries / wins / podiums** | The design asked for share of team points; points do not exist in the source |
 
@@ -93,7 +93,7 @@ Adding any of these requires new source columns first.
 
 ### Entry (start)
 One row in `results`: a driver classified in a race. Because the source has
-no status column, an entry does **not** imply the driver finished. This is
+positions include retirements, an entry does **not** imply the driver finished. This is
 the denominator for every rate.
 
 ### Win rate — `wins / entries`
@@ -320,8 +320,16 @@ comparable with a 13-win season in an 18-race year. Reported alongside the
 count of distinct race winners, which is the plainest concentration signal
 available.
 
-**Limitation.** Not normalised for grid size or regulation era. **Points-based
-dominance is not computed** — the dataset has no points column.
+**Limitation.** Not normalised for grid size or regulation era.
+
+**Points share is reported alongside it**, as each leader's share of all points
+scored that season (race plus sprint, as awarded under that season's rules).
+
+The two are **not on a common scale and must not be compared with each other**.
+Every points-scoring finisher dilutes points share, so it is bounded well below
+1.0 however dominant the leader was: 2023 reads 0.86 win share against 0.24
+points share, and that gap is arithmetic, not a finding. Compare each against
+the *same* measure in another season.
 
 ### Top-5 / top-10 rates
 

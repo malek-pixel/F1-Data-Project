@@ -122,7 +122,11 @@ constructor's** totals, so they sum to 1.0. A share is `null` when the team
 recorded none of that result type (never `0.0`, which would imply a share of a
 real total).
 
-There is no points share. The source has no points column.
+Share of *points* is not offered. Points exist and are returned in each
+driver's stat block, but a share of them would answer a different question
+from the shares above: a driver can take a large share of a team's points
+across many small finishes without a share of its wins. The three shares
+here are all counts of the same kind of event.
 
 ---
 
@@ -148,9 +152,15 @@ Per-season counts: races, entries, distinct drivers, distinct constructors.
 ### `GET /api/seasons/{season}`
 Season summary with `drivers[]`, `constructors[]` and `races_list[]`.
 
-**`ranking_basis` is always `"wins"`.** These are *not* championship standings —
-no points column exists, so entities are ranked by wins, then podiums, then
-average classified position. Clients must label this.
+Returns **both**, and they must not be conflated.
+
+`standings` is the real championship — race plus sprint points, verified to
+reproduce the official champion and points total for every covered season.
+
+`drivers[]` / `constructors[]` are ordered by wins, then podiums, then average
+classified position, and **`ranking_basis` is always `"wins"`** to say so.
+They answer "who won the most races", which is a different question: a driver
+can top that table without winning the championship. Clients must label them.
 
 404 for a season with no races.
 

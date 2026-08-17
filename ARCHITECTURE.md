@@ -93,7 +93,7 @@ and the formatters — `num()`/`pct()` render `null` as an em dash, never as 0.
 `rates_reliable: false` and are marked in the UI. Records apply the threshold as
 a hard filter so a one-race driver cannot top a rate table.
 
-**Season rankings are labelled.** No points column exists, so season tables rank
+**Season rankings are labelled.** Alongside the real points standings, season tables also rank
 by wins and every one of them says so on screen.
 
 ## Testing

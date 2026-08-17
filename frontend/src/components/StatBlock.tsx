@@ -9,8 +9,9 @@ import { Unavailable } from "./States";
  * Two rules this component exists to enforce:
  *
  *  1. "Average classified position" is labelled exactly that -- never
- *     "average finish". The source has no status column, so retirements are
- *     ranked, not excluded.
+ *     "average finish". Retirements are ranked, not excluded, so the mean
+ *     includes them. `DNF RATE` is the direct measure of that and sits
+ *     alongside it.
  *  2. Rates flagged `rates_reliable: false` are shown with a visible sample
  *     caveat rather than hidden, so a small sample is obvious instead of absent.
  */
@@ -42,15 +43,35 @@ export function StatBlock({ stats, entryNoun = "entries" }: { stats: Stats; entr
         value={stats.best_classified_position ? `P${stats.best_classified_position}` : "—"}
         note="Highest classification recorded"
       />
+      {/* Points, DNFs and grid were shown as "unavailable" long after they
+          were ingested. They are real columns; null here now means this
+          entity genuinely has none, not that the dataset lacks the field. */}
+      <StatCard label="POINTS" value={dec(stats.points)} note="As awarded each season, incl. sprints" />
+      <StatCard
+        label="DNF RATE"
+        value={pct(stats.dnf_rate)}
+        note={stats.dnfs === null ? "No status data for these entries" : `${num(stats.dnfs)} of ${num(stats.entries)} entries`}
+      />
+      <StatCard label="AVG GRID" value={dec(stats.avg_grid)} note="Pit-lane starts excluded, not counted as 0" />
+      <StatCard
+        label="AVG PLACES GAINED"
+        value={dec(stats.avg_positions_gained)}
+        note="Grid minus finish, classified finishes only"
+      />
     </div>
   );
 }
 
 /**
- * The metrics the design asks for that seven source columns cannot support.
+ * The metrics that genuinely have no source, rendered rather than omitted.
  *
- * Rendered explicitly rather than silently omitted: a reader should be able to
- * see that pole rate was considered and is genuinely absent, not overlooked.
+ * A reader should be able to see that fastest laps were considered and are
+ * absent, not overlooked.
+ *
+ * This list used to include pole rate, DNF rate and points per race. All
+ * three were ingested and the panel went on calling them unavailable, so the
+ * UI was telling users a column was missing while the API served it. Only
+ * things with no source at all belong here.
  */
 export function UnavailableMetrics() {
   return (
@@ -58,15 +79,16 @@ export function UnavailableMetrics() {
       <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 12, flexWrap: "wrap" }}>
         <Badge tone="warning">Missing data</Badge>
         <span style={{ fontSize: 13, color: "var(--text-dim)" }}>
-          These metrics are not computed because the required columns are absent from the source. They are
-          never estimated.
+          These are not computed because no source supplies them. They are never estimated. What the
+          dataset does have is reported by the dataset summary, which counts rows rather than relying
+          on a list like this one staying current.
         </span>
       </div>
       <div className="grid grid--kpi">
-        <Unavailable label="POLE RATE" why="No qualifying or grid column in results.csv." />
-        <Unavailable label="FASTEST LAPS" why="No fastest-lap column in results.csv." />
-        <Unavailable label="DNF RATE" why="No finishing-status column; retirements are ranked, not flagged." />
-        <Unavailable label="POINTS / RACE" why="No points column in results.csv." />
+        <Unavailable label="FASTEST LAPS" why="No source records the fastest lap of a race." />
+        <Unavailable label="LAP TIMES" why="Ingestion is per-race and still in progress." />
+        <Unavailable label="TYRE COMPOUND" why="No source supplies tyre data." />
+        <Unavailable label="CAR / ENGINE SPEC" why="No source supplies chassis or engine detail." />
       </div>
     </>
   );

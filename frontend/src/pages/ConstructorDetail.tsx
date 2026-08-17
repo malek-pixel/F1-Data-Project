@@ -79,8 +79,11 @@ export function ConstructorDetail() {
               />
             </CellGrid>
             <CellGrid cols={4}>
-              <PendingCell label="POINTS" why="No points column in results.csv" />
-              <PendingCell label="WCC TITLES" why="Titles require points; the source has none" />
+              <Cell label="POINTS" value={dec(team.stats.points)} note="All seasons, incl. sprints" />
+              {/* Titles need a season-by-season champion, which is a
+                  derivation over standings this app does not yet make.
+                  Points themselves are available and shown alongside. */}
+              <PendingCell label="WCC TITLES" why="Not derived: needs a champion per season, not just points" />
               <PendingCell label="BASE" why="Needs Ergast constructors.csv" />
               <PendingCell label="LIVERY" why="No livery or colour data in the source" />
             </CellGrid>
@@ -183,10 +186,14 @@ export function ConstructorDetail() {
 
           <SectionTitle>Not available for this constructor</SectionTitle>
           <div className="grid grid--kpi">
-            <Unavailable label="CONSTRUCTORS' POINTS" why="No points column in results.csv." />
-            <Unavailable label="CHAMPIONSHIP TITLES" why="Titles require points; not derivable from classifications." />
-            <Unavailable label="RELIABILITY / DNFs" why="No finishing-status column." />
-            <Unavailable label="CAR SPECIFICATIONS" why="No car metadata in the dataset." />
+            {/* Points and DNFs were listed here as unavailable long after
+                they were ingested, so this panel told users a column was
+                missing while the API served it. Both are now shown in the
+                stat block above; only genuinely sourceless things remain. */}
+            <Unavailable label="CHAMPIONSHIP TITLES" why="Not derived: needs a champion per season, not just points." />
+            <Unavailable label="CAR SPECIFICATIONS" why="No source supplies chassis or engine detail." />
+            <Unavailable label="FASTEST LAPS" why="No source records the fastest lap of a race." />
+            <Unavailable label="LIVERY" why="No source supplies livery or colour data." />
           </div>
         </>
       )}

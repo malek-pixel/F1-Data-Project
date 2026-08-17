@@ -126,6 +126,16 @@ export interface RaceResult {
   constructor_id: number;
   constructor_slug: string;
   constructor_name: string;
+  /** Null means not known for this row, never zero. `grid: 0` is a real
+   *  value -- a pit-lane start. */
+  grid: number | null;
+  laps: number | null;
+  points: number | null;
+  /** Raw source text ("Finished", "+1 Lap", "Gearbox"). Deliberately not
+   *  bucketed into an enum: the detail is the value. */
+  status: string | null;
+  classification: string | null;
+  position_text: string | null;
 }
 
 /** One round of a season with its winner. Winner fields are null when the
