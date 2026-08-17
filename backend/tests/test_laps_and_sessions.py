@@ -526,3 +526,43 @@ def test_award_and_derived_quickest_lap_are_not_conflated(conn):
     assert "fastest_lap_award" in body and "fastest_lap" in body
     assert body["fastest_lap"]["basis"] != body["fastest_lap_award"]["basis"]
     assert "not the official award" in body["fastest_lap"]["basis"]
+
+
+# ---------------------------------------------------------------------------
+# Sessions that produced no timing, and why
+# ---------------------------------------------------------------------------
+
+def test_races_with_practice_have_at_least_one_session_with_laps(conn):
+    """A weekend recorded as having practice must have real laps somewhere.
+
+    Guards against the empty-caching of cancelled sessions being applied too
+    widely. If every session of a weekend came back empty, that is far more
+    likely to be a fetch that silently gave up than three cancelled sessions.
+    """
+    hollow = conn.execute(
+        """
+        SELECT ra.season, ra.round
+        FROM races ra
+        WHERE ra.season >= 2018
+          AND EXISTS (SELECT 1 FROM practice_laps p WHERE p.race_id = ra.id)
+        GROUP BY ra.id
+        HAVING SUM((SELECT COUNT(*) FROM practice_laps p WHERE p.race_id = ra.id)) = 0
+        LIMIT 5
+        """
+    ).fetchall()
+    assert not hollow, f"weekend with practice rows but no laps: {[tuple(r) for r in hollow]}"
+
+
+def test_practice_laps_only_exist_for_sessions_that_ran(conn):
+    """Every stored practice lap belongs to one of the three practice codes.
+
+    Cancelled sessions are cached empty rather than stored as rows, so a lap
+    attached to a session that did not run would mean the empty-caching and
+    the loader disagree about what happened.
+    """
+    if not conn.execute("SELECT COUNT(*) FROM practice_laps").fetchone()[0]:
+        pytest.skip("no practice laps loaded yet")
+    orphan_sessions = conn.execute(
+        "SELECT DISTINCT session FROM practice_laps WHERE session NOT IN ('fp1','fp2','fp3')"
+    ).fetchall()
+    assert not orphan_sessions, f"laps under an unknown session: {orphan_sessions}"

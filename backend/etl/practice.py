@@ -323,7 +323,26 @@ def run(seasons: list[int] | None = None, refresh: bool = False) -> int:
             rows = fetch_session(season, round_, code, refresh, race_name)
         except Exception as error:  # noqa: BLE001 - recorded, not swallowed
             message = str(error)
-            if "does not exist for this event" in message:
+            # Two ways a session legitimately has no timing, both permanent.
+            #
+            #   * the session was never on the schedule -- sprint weekends run
+            #     one practice instead of three
+            #   * the session was scheduled and did not run, or ran without
+            #     timing being recorded
+            #
+            # The second is real F1 history, not breakage: 2019 Japanese FP3
+            # was cancelled for Typhoon Hagibis, 2020 Eifel FP1 and FP2 for
+            # fog that grounded the medical helicopter, and the 2020 Emilia
+            # Romagna weekend ran a two-day format with FP1 only.
+            #
+            # Retrying cannot produce data that does not exist, and leaving
+            # them recorded as failures means `remaining` never reaches zero
+            # -- so "is the download finished?" becomes unanswerable.
+            never_ran = (
+                "does not exist for this event" in message
+                or type(error).__name__ == "DataNotLoadedError"
+            )
+            if never_ran:
                 # NOT a failure. Sprint weekends run one practice session
                 # instead of three, so FP2 and FP3 genuinely did not happen.
                 # Cached empty so it is never asked for again, and so the
@@ -333,7 +352,9 @@ def run(seasons: list[int] | None = None, refresh: bool = False) -> int:
                 cache_path(season, round_, code).write_text("[]", encoding="utf-8")
                 failures.pop(key, None)
                 _write_failures(failures)
-                print(f"  {key:>16}  not held this weekend", flush=True)
+                reason = ("not on the schedule" if "does not exist" in message
+                          else "scheduled but no timing recorded")
+                print(f"  {key:>16}  no session data ({reason})", flush=True)
                 done += 1
                 continue
             failures[key] = f"{type(error).__name__}: {error}"
