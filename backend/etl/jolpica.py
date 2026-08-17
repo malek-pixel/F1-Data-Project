@@ -29,7 +29,13 @@ TIMEOUT_SECONDS = 60
 USER_AGENT = "f1-data-project/ingest"
 
 
-MAX_RETRIES = 6
+# Raised from 6 after a full-calendar lap sweep. Six attempts with the backoff
+# below tops out at roughly two minutes of waiting, and Jolpica's sustained
+# limit is tighter than that over a run of thousands of requests -- races were
+# being recorded as failures purely for being asked about during a long
+# throttle. Giving up early does not save the rate budget, it just means the
+# same request is made again on the next run.
+MAX_RETRIES = 10
 
 
 def _get(path: str, offset: int) -> dict:
@@ -55,9 +61,13 @@ def _get(path: str, offset: int) -> dict:
             response.raise_for_status()
             return response.json()["MRData"]
 
+        # Obey the server's own Retry-After when it sends one; otherwise back
+        # off exponentially. The ceiling is 120s rather than 60s for the same
+        # reason the attempt count went up: a long sweep meets throttles that
+        # outlast a one-minute wait.
         wait = float(response.headers.get("Retry-After", delay))
         time.sleep(wait)
-        delay = min(delay * 2, 60)
+        delay = min(delay * 2, 120)
 
     raise RuntimeError(f"rate limited after {MAX_RETRIES} attempts: {path}")
 

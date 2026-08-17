@@ -140,7 +140,8 @@ METRICS: list[dict] = [
         "limitations": (
             "Field sizes vary from 20 to 24 across the covered period, so a top-10 finish is not "
             "equally difficult in every season. Historically it also tracked the points boundary "
-            "only from 2010; the dataset has no points column, so this is purely positional."
+            "only from 2010. This metric is purely positional by design -- points are "
+            "available and are reported separately rather than folded into it."
         ),
         "min_sample": MIN_ENTRIES_FOR_RATES,
     },
@@ -208,8 +209,9 @@ METRICS: list[dict] = [
         "definition": "Proportion of a season's races won by one driver or constructor.",
         "edge_cases": "Denominator is races actually held that season, which varies from 16 to 24.",
         "limitations": (
-            "Normalised for calendar length but not for grid size or regulation era. Championship "
-            "points dominance cannot be computed — the dataset has no points column."
+            "Normalised for calendar length but not for grid size or regulation era. "
+            "Reported alongside points share, which measures a different thing: a season "
+            "can be uneven on wins and close on points."
         ),
         "min_sample": None,
     },
@@ -516,8 +518,21 @@ def season_dominance(conn: sqlite3.Connection, season: int) -> dict | None:
     """How concentrated a season's results were.
 
     Win share is normalised by races held, so a 19-win season in a 22-race year
-    is comparable with a 13-win season in a 16-race year. Points-based
-    dominance is not offered -- the dataset has no points column.
+    is comparable with a 13-win season in a 16-race year.
+
+    Points share is reported alongside it, and the two answer different
+    questions. Wins measure how often one competitor was first; points measure
+    how much of the season's total scoring they took.
+
+    They are not on a common scale and must not be compared against each
+    other. Every points-paying finisher dilutes points_share, so it is bounded
+    well below 1.0 no matter how dominant the leader was: 2023 reads 0.86 win
+    share and 0.24 points share, and that gap is arithmetic, not a finding.
+    Each is meaningful compared with the SAME measure in another season.
+
+    Points share uses points as awarded under each season's own rules, race
+    plus sprint, never recomputed from finishing position: the scoring system
+    changed in 2003, 2010 and 2019, and half points exist.
     """
     races = conn.execute("SELECT COUNT(*) FROM races WHERE season = ?", [season]).fetchone()[0]
     if not races:
@@ -531,7 +546,8 @@ def season_dominance(conn: sqlite3.Connection, season: int) -> dict | None:
                    SUM(CASE WHEN r.position  = 1 THEN 1 ELSE 0 END) AS wins,
                    SUM(CASE WHEN r.position <= 3 THEN 1 ELSE 0 END) AS podiums,
                    COUNT(*) AS entries,
-                   AVG(CAST(r.position AS REAL)) AS avg_position
+                   AVG(CAST(r.position AS REAL)) AS avg_position,
+                   SUM(COALESCE(r.points, 0)) AS points
             FROM results r
             JOIN races ra  ON ra.id = r.race_id
             JOIN {table} e ON e.id  = {column}
@@ -547,11 +563,24 @@ def season_dominance(conn: sqlite3.Connection, season: int) -> dict | None:
                 "entries": row["entries"],
                 "avg_classified_position": round(row["avg_position"], 3),
                 "win_share": row["wins"] / races,
+                "points": round(row["points"], 2),
             }
             for row in rows
         ]
 
     drivers, constructors = leaders("driver"), leaders("constructor")
+
+    def points_share(rows: list[dict]) -> float | None:
+        """Share of the season's points taken by its highest scorer.
+
+        None rather than 0.0 when the season scored nothing at all, so "no
+        points data for this season" stays distinguishable from "nobody
+        scored" -- which has never happened.
+        """
+        total = sum(row["points"] for row in rows)
+        if not total:
+            return None
+        return max(row["points"] for row in rows) / total
     # Number of distinct winners is the plainest dominance signal available:
     # a season won by two drivers was more concentrated than one won by eight.
     distinct_driver_winners = sum(1 for d in drivers if d["wins"] > 0)
@@ -564,9 +593,19 @@ def season_dominance(conn: sqlite3.Connection, season: int) -> dict | None:
         "distinct_constructor_winners": distinct_team_winners,
         "top_driver_win_share": drivers[0]["win_share"] if drivers else None,
         "top_constructor_win_share": constructors[0]["win_share"] if constructors else None,
+        "top_driver_points_share": points_share(drivers),
+        "top_constructor_points_share": points_share(constructors),
         "drivers": drivers[:10],
         "constructors": constructors[:10],
-        "basis": "wins / races held. No points column exists, so points dominance is not computed.",
+        "basis": (
+            "win_share is wins / races held. points_share is the leader's points "
+            "divided by ALL points scored that season, race plus sprint, as awarded "
+            "under that season's rules. The two are NOT on the same scale and must "
+            "not be read as competing estimates of one quantity: twenty drivers "
+            "score points, so points_share has a floor far below 1.0 even in a "
+            "season one driver dominates -- 2023 is 0.86 win share against 0.24 "
+            "points share. Compare each across seasons, never against the other."
+        ),
     }
 
 

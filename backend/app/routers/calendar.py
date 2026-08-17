@@ -43,10 +43,22 @@ def list_seasons(conn: sqlite3.Connection = Depends(get_db)):
 
 @router.get("/seasons/{season}", tags=["seasons"])
 def get_season(season: int, conn: sqlite3.Connection = Depends(get_db)):
-    """Season detail with wins-based driver and constructor tables.
+    """Season detail: the championship standings, plus wins-ordered tables.
 
-    `ranking_basis` is always "wins": these are NOT championship standings,
-    because the source carries no points column. Clients must label them.
+    Two different things are returned and they must not be conflated.
+
+    `standings` is the real championship -- race plus sprint points, verified
+    to reproduce the official champion and points total for every covered
+    season. This is what a reader means by "the standings".
+
+    `drivers` / `constructors` are ordered by wins, and `ranking_basis` says
+    so. They answer "who won the most races", which is a different question;
+    a driver can top that table without winning the championship. They are
+    retained because existing consumers read them.
+
+    The docstring here previously said these were NOT standings "because the
+    source carries no points column". Points have been ingested since; the
+    standings are real and the caveat was simply out of date.
     """
     summary = analytics.season_summary(conn, season)
     if summary is None:

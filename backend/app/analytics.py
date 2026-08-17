@@ -7,35 +7,54 @@ If a number appears in the UI, its formula lives in this file.
 METRIC DEFINITIONS  (mirrored in METHODOLOGY.md -- keep the two in sync)
 --------------------------------------------------------------------------
 entry / start
-    One `results` row: a driver classified in a race. The source has no
-    status column, so a driver who retired on lap 1 is still an entry. This
-    is the denominator for every rate below, and it is why they are labelled
-    "per entry" and not "per finish".
+    One `results` row: a driver classified in a race. A driver who retired on
+    lap 1 is still an entry. Retirements ARE identifiable -- `results.status`
+    and `results.classification` carry them -- but they are not excluded here,
+    because an entry is a start regardless of how it ended. That is why every
+    rate below is labelled "per entry" and not "per finish".
 
 win                     entries where position = 1
 podium                  entries where position <= 3
 win rate                wins / entries
 podium rate             podiums / entries
 average classified position
-    mean(position) over entries. NOT average *finishing* position: with no
-    DNF flag, a lap-1 retirement classified P19 contributes 19. It measures
-    where an entry ended up in the final classification, including
-    retirements. Lower is better; it is biased upward by unreliability.
+    mean(position) over entries. NOT average *finishing* position: a lap-1
+    retirement classified P19 contributes 19. It measures where an entry
+    ended up in the final classification, including retirements. Lower is
+    better; it is biased upward by unreliability. `dnf_rate` is the direct
+    measure of that unreliability and should be read alongside it.
+
+dnf / finish
+    An entry whose classification is not 'classified'. The denominator is the
+    number of entries carrying a status, never all entries -- a partially
+    enriched build must not report a rate over rows it knows nothing about.
+
+points
+    As awarded under the rules of each season, race plus sprint. Never
+    recomputed from finishing position: scoring systems changed in 2003, 2010
+    and 2019, and half points exist.
 
 driver contribution (within a constructor)
     A driver's share of that constructor's entries / wins / podiums over the
-    selected span. Deliberately NOT "share of team points" -- the source has
-    no points column, so a points share cannot be computed.
+    selected span.
 
 --------------------------------------------------------------------------
-DELIBERATELY ABSENT -- required columns are not in the source
+ABSENT -- no source supplies these
 --------------------------------------------------------------------------
-    pole rate, qualifying performance, grid position, fastest laps,
-    DNF rate / finish rate / reliability, points, points-per-race,
-    championship standings, lap times, sector times, pit stops, tyres.
+    fastest laps, sector times, tyre compounds, telemetry, car and engine
+    specifications, practice classifications.
 
-Adding any of these requires new source columns first. Routers surface them
-as an explicit "unavailable" state; they are never estimated or inferred.
+Adding any of these requires a new source first. They are never estimated or
+inferred, and `/api/dataset/summary` reports availability by counting rows so
+this list cannot be the thing that goes stale.
+
+WHAT USED TO BE HERE
+--------------------
+This section previously also listed points, championship standings, grid
+position, qualifying, DNF/finish rate, lap times and pit stops as absent.
+All of them have been ingested and are served. The list was hand-maintained
+and simply stopped being true, which is exactly why availability is now
+measured rather than declared -- see backend/etl/audit.py.
 """
 from __future__ import annotations
 

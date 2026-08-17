@@ -42,9 +42,17 @@ app = FastAPI(
         "Analytical API over Formula 1 race classifications.\n\n"
         "The seasons covered are whatever the build contains -- see "
         "`/api/dataset/summary` for the authoritative window.\n\n"
-        "Every derived number is defined once in `backend/app/analytics.py`. "
-        "Qualifying, points, finishing status, lap times and car specifications are "
-        "absent from the source data and are never estimated -- see `/api/dataset/summary`."
+        "Every derived number is defined once in `backend/app/analytics.py`.\n\n"
+        # No list of absent datasets here either. The previous version of this
+        # string named qualifying, points and finishing status as absent, and
+        # went on saying so for as long as it took someone to read it against
+        # the database. Availability is counted from rows and served by
+        # `/api/dataset/summary`; this description points at that rather than
+        # duplicating a claim nothing re-checks.
+        "Which datasets are present, partial or absent is measured from the "
+        "database itself and reported by `/api/dataset/summary`. Nothing is "
+        "estimated or inferred: a value that is not in a source is absent, "
+        "never approximated."
     ),
 )
 
