@@ -877,12 +877,28 @@ def season_rounds(conn: sqlite3.Connection, season: int) -> list[dict]:
                d.id  AS winner_driver_id,      d.slug AS winner_driver_slug,
                d.name AS winner_driver,
                c.id  AS winner_constructor_id, c.slug AS winner_constructor_slug,
-               c.name AS winner_constructor
+               c.name AS winner_constructor,
+               -- The winner's own grid and status. Present since the
+               -- enrichment was ingested; this payload simply never carried
+               -- them, so the UI rendered "no grid column in the source"
+               -- beside a database that had one.
+               r.grid   AS winner_grid,
+               r.status AS winner_status,
+               -- Whoever qualified first. Deliberately NOT called "pole":
+               -- qualifying P1 and the pole position differ in the sprint era.
+               pole.name AS qualifying_first,
+               pole.slug AS qualifying_first_slug
         FROM races ra
         JOIN circuits ci        ON ci.id = ra.circuit_id
         LEFT JOIN results r     ON r.race_id = ra.id AND r.position = 1
         LEFT JOIN drivers d     ON d.id = r.driver_id
         LEFT JOIN constructors c ON c.id = r.constructor_id
+        LEFT JOIN (
+            SELECT q.race_id, dq.name, dq.slug
+            FROM qualifying_results q
+            JOIN drivers dq ON dq.id = q.driver_id
+            WHERE q.position = 1
+        ) pole ON pole.race_id = ra.id
         WHERE ra.season = ?
         ORDER BY ra.round
         """,

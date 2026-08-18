@@ -116,6 +116,10 @@ export interface Race {
   winner_constructor_id: number | null;
   winner_constructor_slug: string | null;
   winner_constructor: string | null;
+  winner_grid: number | null;
+  winner_status: string | null;
+  qualifying_first: string | null;
+  qualifying_first_slug: string | null;
 }
 
 export interface RaceResult {
@@ -153,6 +157,13 @@ export interface SeasonRound {
   winner_constructor_id: number | null;
   winner_constructor_slug: string | null;
   winner_constructor: string | null;
+  /** The winner's own grid slot. 0 is real -- a pit-lane start. */
+  winner_grid: number | null;
+  winner_status: string | null;
+  /** Whoever qualified first. Deliberately not called "pole": qualifying P1
+   *  and the pole position differ in the sprint era. */
+  qualifying_first: string | null;
+  qualifying_first_slug: string | null;
 }
 
 export interface SeasonRounds {
@@ -215,6 +226,8 @@ export interface RaceDetail extends Race {
   sprint: SessionBlock<SprintResult>;
   pit_stops: SessionBlock<PitStop>;
   fastest_lap: FastestLapSection;
+  fastest_lap_award: FastestLapAwardSection;
+  practice: PracticeBlock;
 }
 
 export interface DriverDetail {
@@ -496,4 +509,61 @@ export interface FastestLapSection {
   unavailable_reason: string | null;
   basis: string;
   item: FastestLap | null;
+}
+
+
+/** One driver's practice-session result: their best lap that STOOD.
+ *
+ *  Derived, not published -- no source issues a practice classification.
+ *  Deleted laps are excluded from the ranking but kept in the data, because
+ *  which laps stood is what decides a session's fastest time.
+ *
+ *  `position` is null for a driver who ran but set no valid time. They were
+ *  on track; "unranked" and "slowest" are different statements. */
+export interface PracticeResult {
+  position: number | null;
+  driver_id: number;
+  driver_slug: string;
+  driver_name: string;
+  best_lap: number | null;
+  gap_to_leader: number | null;
+  laps: number;
+  deleted_laps: number;
+}
+
+/** Practice sessions for a race weekend.
+ *
+ *  A DIFFERENT SOURCE from everything else on the race payload: FastF1 reads
+ *  Formula 1 live timing, which is the only provider carrying practice laps,
+ *  tyre compounds and sector times. Coverage starts in 2018. */
+export interface PracticeBlock {
+  available: boolean;
+  unavailable_reason: string | null;
+  source: string;
+  sessions: Record<string, PracticeResult[]>;
+}
+
+/** The official fastest-lap AWARD, as published.
+ *
+ *  NOT the same as the derived quickest lap: the award applies eligibility
+ *  rules -- a classified finish, and since 2019 a top-ten position to score
+ *  the point -- so the two can name different drivers. */
+export interface FastestLapAward {
+  driver_id: number;
+  driver_slug: string;
+  driver_name: string;
+  constructor_id: number;
+  constructor_slug: string;
+  constructor_name: string;
+  lap: number | null;
+  time_text: string | null;
+  average_speed_kph: number | null;
+  finish_position: number;
+}
+
+export interface FastestLapAwardSection {
+  available: boolean;
+  unavailable_reason: string | null;
+  basis: string;
+  item: FastestLapAward | null;
 }

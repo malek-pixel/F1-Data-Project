@@ -70,7 +70,12 @@ describe("Unavailable", () => {
 
   it("lists every unsupported metric explicitly", () => {
     render(<UnavailableMetrics />);
-    for (const label of ["FASTEST-LAP AWARDS", "SECTOR TIMES", "TYRE COMPOUND", "CAR / ENGINE SPEC"]) {
+    // Labels say RACE explicitly where the answer differs by session: race
+    // laps carry no sectors or compounds, practice laps do. A blanket
+    // "SECTOR TIMES" would claim more absence than is true.
+    for (const label of [
+      "FASTEST-LAP AWARDS", "RACE SECTOR TIMES", "RACE TYRE COMPOUND", "CAR / ENGINE SPEC",
+    ]) {
       expect(screen.getByText(label)).toBeInTheDocument();
     }
     expect(screen.getAllByText("Not available in dataset")).toHaveLength(4);

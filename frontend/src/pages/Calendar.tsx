@@ -537,15 +537,39 @@ export function RaceIndex() {
                         <PendingValue />
                       ),
                   },
-                  /* The mockup's POLE, GRID, GAP and STATUS columns. None of
-                     the four is in the seven source columns. */
-                  { key: "pole", header: "Pole", render: () => <PendingValue title="No qualifying data in the source" /> },
-                  { key: "grid", header: "Grid", render: () => <PendingValue title="No grid column in the source" /> },
+                  /* Three of these four rendered "not in the source" long
+                     after qualifying, grid and finishing status had been
+                     ingested. Only the gap is genuinely absent. */
+                  {
+                    key: "qual",
+                    // "Qual P1", not "Pole": the two differ in the sprint era,
+                    // and this counts whoever qualified fastest.
+                    header: "Qual P1",
+                    render: (r) =>
+                      r.qualifying_first_slug ? (
+                        <Link to={`/drivers/${r.qualifying_first_slug}`}>{r.qualifying_first}</Link>
+                      ) : (
+                        <PendingValue title="No qualifying recorded for this race" />
+                      ),
+                  },
+                  {
+                    key: "grid",
+                    header: "Grid",
+                    numeric: true,
+                    render: (r) =>
+                      r.winner_grid === null ? (
+                        <PendingValue title="No grid recorded for this race" />
+                      ) : r.winner_grid === 0 ? (
+                        "PIT"
+                      ) : (
+                        <span className="mono">{r.winner_grid}</span>
+                      ),
+                  },
                   { key: "gap", header: "Gap", render: () => <PendingValue title="No race or gap times in the source" /> },
                   {
                     key: "status",
                     header: "Status",
-                    render: () => <PendingValue title="No finishing-status column in the source" />,
+                    render: (r) => r.winner_status ?? <PendingValue title="No status recorded" />,
                   },
                 ]}
               />
@@ -653,7 +677,31 @@ export function RaceDetail() {
                 ) : (
                   <PendingCell label="QUICKEST LAP" why={race.fastest_lap.unavailable_reason ?? "No lap timings for this race"} />
                 )}
-                <PendingCell label="TYRE STRATEGY" why="No source supplies tyre compounds" />
+                {race.fastest_lap_award.available && race.fastest_lap_award.item ? (
+                  <Cell
+                    label="FASTEST LAP (AWARD)"
+                    value={race.fastest_lap_award.item.time_text ?? "—"}
+                    /* Distinct from QUICKEST LAP above. The award applies
+                       eligibility rules -- a classified finish, and since 2019
+                       a top-ten position for the point -- so the two can name
+                       different drivers. Showing where they finished makes
+                       that visible: at Bahrain 2023 Zhou set it and came
+                       sixteenth, scoring nothing. */
+                    note={`${race.fastest_lap_award.item.driver_name} · finished P${race.fastest_lap_award.item.finish_position}`}
+                  />
+                ) : (
+                  <PendingCell
+                    label="FASTEST LAP (AWARD)"
+                    why={race.fastest_lap_award.unavailable_reason ?? "Not recorded for this race"}
+                  />
+                )}
+                {/* Race tyre strategy specifically: compounds are published
+                    for practice from 2018 but not for race laps, so this says
+                    which half is missing rather than claiming both. */}
+                <PendingCell
+                  label="RACE TYRE STRATEGY"
+                  why="Compounds are not published for race laps. Practice compounds exist from 2018."
+                />
               </CellGrid>
             </div>
           </div>
@@ -663,6 +711,92 @@ export function RaceDetail() {
             includes retirements — a car that stopped on lap 1 still holds a position. The `status` column
             says which is which, so a retirement is distinguishable from a finish.
           </p>
+
+          {/* Practice, from a DIFFERENT SOURCE to everything else on this
+              page. Labelled as such: a practice time and a race time are not
+              comparable, and a reader should not have to infer where each
+              number came from. */}
+          <Panel>
+            <PaneHead
+              title="Practice"
+              meta={
+                race.practice.available
+                  ? `${Object.keys(race.practice.sessions).length} SESSIONS · ${race.practice.source}`
+                  : "NOT AVAILABLE"
+              }
+            />
+            {race.practice.available ? (
+              <div className="panel--pad">
+                {Object.entries(race.practice.sessions).map(([code, rows]) => (
+                  <div key={code} style={{ marginBottom: 20 }}>
+                    <h4 className="mono" style={{ marginBottom: 8, textTransform: "uppercase" }}>
+                      {code}
+                    </h4>
+                    <DataTable
+                      caption={`${race.season} ${race.name} ${code.toUpperCase()} classification`}
+                      rows={rows.slice(0, 10)}
+                      rowKey={(row) => row.driver_id}
+                      columns={[
+                        {
+                          key: "pos",
+                          header: "Pos",
+                          numeric: true,
+                          // Null for a driver who ran but set no valid time.
+                          // They are unranked, which is not the same as last.
+                          render: (r) =>
+                            r.position === null ? (
+                              <span title="Ran but set no valid time">—</span>
+                            ) : (
+                              <span className="mono">{r.position}</span>
+                            ),
+                        },
+                        {
+                          key: "driver",
+                          header: "Driver",
+                          render: (r) => <Link to={`/drivers/${r.driver_slug}`}>{r.driver_name}</Link>,
+                        },
+                        {
+                          key: "best",
+                          header: "Best lap",
+                          numeric: true,
+                          render: (r) =>
+                            r.best_lap === null ? "—" : <span className="mono">{r.best_lap.toFixed(3)}</span>,
+                        },
+                        {
+                          key: "gap",
+                          header: "Gap",
+                          numeric: true,
+                          render: (r) =>
+                            r.gap_to_leader === null || r.gap_to_leader === 0
+                              ? "—"
+                              : <span className="mono">+{r.gap_to_leader.toFixed(3)}</span>,
+                        },
+                        { key: "laps", header: "Laps", numeric: true, render: (r) => r.laps },
+                        {
+                          key: "deleted",
+                          header: "Deleted",
+                          numeric: true,
+                          // Deleted laps are excluded from the ranking but
+                          // shown, because a driver losing their best time to
+                          // track limits is part of what happened.
+                          render: (r) => (r.deleted_laps ? r.deleted_laps : "—"),
+                        },
+                      ]}
+                    />
+                  </div>
+                ))}
+                <div className="kpi__note">
+                  Each driver's best lap that <strong>stood</strong>. Deleted laps are excluded from the
+                  order but counted here. Times come from {race.practice.source}, not from the source
+                  behind the race classification — do not compare them directly.
+                </div>
+              </div>
+            ) : (
+              <div className="panel--pad">
+                <div className="kpi__note">{race.practice.unavailable_reason}</div>
+              </div>
+            )}
+          </Panel>
 
           <Panel>
             <PaneHead title="Classification" meta={`${race.results.length} ROWS`} />

@@ -134,6 +134,13 @@ class Race(BaseModel):
     winner_constructor_id: int | None = None
     winner_constructor_slug: str | None = None
     winner_constructor: str | None = None
+    # The winner's grid slot (0 is real -- a pit-lane start) and finishing
+    # status, plus whoever qualified first. Named "qualifying_first" rather
+    # than "pole" because the two differ in the sprint era.
+    winner_grid: int | None = None
+    winner_status: str | None = None
+    qualifying_first: str | None = None
+    qualifying_first_slug: str | None = None
 
 
 class RaceResult(BaseModel):
