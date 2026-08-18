@@ -29,9 +29,20 @@ PAUSE_SECONDS = 0.3
 TIMEOUT_SECONDS = 60
 USER_AGENT = "f1-data-project/ingest"
 
-# An API key, when one is configured, raises the hourly quota by an order of
-# magnitude. Optional: without it everything still works, just slower.
-API_KEY = os.getenv("JOLPICA_API_KEY", "").strip()
+# There is NO API KEY. This is checked, not assumed.
+#
+# An earlier version of this file read JOLPICA_API_KEY and, when set, paced
+# requests at 10,000/hour. That number was invented. Jolpica's own rate-limit
+# documentation says token authentication is "currently being implemented"
+# and publishes no authenticated figure at all.
+#
+# The bug was worse than the wrong docs: setting the variable to any value
+# would have paced the fetcher twenty times too fast, so every request past
+# the first 500 in an hour would fail. An unavailable feature that breaks
+# ingestion when someone tries to use it is worse than no feature.
+#
+# If tokens do ship, the change is a higher HOURLY_BUDGET and an auth header
+# -- but only once the real published limit is known.
 
 # Sustained request budget per hour, and the minimum spacing that respects it.
 #
@@ -46,11 +57,12 @@ API_KEY = os.getenv("JOLPICA_API_KEY", "").strip()
 #
 # Spacing requests to stay just inside the budget is slower per request and
 # far faster overall, because none of them are wasted. A full lap sweep is
-# ~4,600 requests, so unauthenticated it is genuinely an overnight job; with a
-# key it is under an hour.
-_UNAUTHENTICATED_HOURLY = 500
-_AUTHENTICATED_HOURLY = 10_000
-HOURLY_BUDGET = _AUTHENTICATED_HOURLY if API_KEY else _UNAUTHENTICATED_HOURLY
+# ~4,600 requests against 500/hour, so it is genuinely an overnight job and
+# there is no way to shorten it: the limit is the source's, not ours.
+# Jolpica's published sustained limit: 500 requests/hour, plus a 4/second
+# burst cap. The documentation also warns these "will decrease in the future",
+# so this is a ceiling to stay under, not a target to saturate.
+HOURLY_BUDGET = 500
 # 2% headroom: landing exactly on the limit is landing over it.
 MIN_REQUEST_INTERVAL = 3600.0 / (HOURLY_BUDGET * 0.98)
 
@@ -125,8 +137,6 @@ def _get(path: str, offset: int) -> dict:
     """
     delay = 2.0
     headers = {"User-Agent": USER_AGENT}
-    if API_KEY:
-        headers["X-API-Key"] = API_KEY
 
     for attempt in range(MAX_RETRIES):
         _throttle()

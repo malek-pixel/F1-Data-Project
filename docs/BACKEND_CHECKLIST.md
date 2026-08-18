@@ -54,10 +54,31 @@ The command loops until each dataset is complete and stops on its own if two
 passes in a row achieve nothing, so it will not spin forever pretending to
 work.
 
-### Make it much faster
+### Can it be made faster? No.
 
-Set `JOLPICA_API_KEY` in `.env`. It raises the hourly request cap roughly
-twentyfold and turns the lap fetch from an overnight job into under an hour.
+An earlier version of this file told you to set `JOLPICA_API_KEY` for a
+twentyfold speedup. **That was wrong and the option has been removed.**
+Jolpica's own documentation says token authentication is "currently being
+implemented" and publishes no authenticated rate limit at all. The number was
+invented, and setting the variable would have paced the fetcher twenty times
+too fast, failing every request past the first 500 each hour.
+
+The real limits, from the source's docs:
+
+| | |
+|---|---|
+| Sustained | 500 requests/hour |
+| Burst | 4 requests/second |
+| Max page size | 100 rows, hard ceiling |
+
+The work is row-bound, not request-bound: roughly 1,100 lap timings per race
+at 100 rows per request. Fetching a whole season in one query instead of race
+by race returns the same number of rows and therefore the same number of
+requests. There is no query shape that avoids this.
+
+So the lap fetch is an overnight job, and that is a property of the source
+rather than of this code. The documentation also warns these limits "will
+decrease in the future".
 
 ### When BOTH report `"remaining": 0`, run these
 
