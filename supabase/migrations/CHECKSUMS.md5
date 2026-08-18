@@ -1,5 +1,5 @@
 # md5 of each migration's SQL as stored in supabase_migrations.schema_migrations
-# on project qdrxgymohkitpxedukdb, read 2026-08-13. These prove the checked-in
+# on the hosted project, read 2026-08-13. These prove the checked-in
 # files are byte-identical to what was actually applied to the hosted database.
 #
 # Verify with:  python supabase/verify_migrations.py

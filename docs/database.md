@@ -13,7 +13,7 @@ Supabase / PostgreSQL 17 is the PostgreSQL materialisation of the dataset.
 
 | | |
 |---|---|
-| Project | `f1-data-project` (`qdrxgymohkitpxedukdb`) |
+| Project | `f1-data-project` (project ref held in `.env`, not published) |
 | Region | eu-central-1 |
 | Engine | PostgreSQL 17.6 |
 | Migrations | 8, applied in order against the hosted project, checked in under `supabase/migrations/` |

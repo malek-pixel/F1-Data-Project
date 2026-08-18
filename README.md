@@ -171,6 +171,28 @@ the build fails on any unmapped race name rather than dropping a race silently.
 24 of 39 circuits ship a track-map SVG; the other 15 render a map-unavailable
 state.
 
+### Data sources and attribution
+
+Two independent providers. They are never blended: each has its own tables, its
+own coverage window, and its own verification level in the audit, because a
+reader comparing two numbers needs to know when they came from different places.
+
+| Source | Provides | Coverage | Licence / terms |
+|---|---|---|---|
+| [**Jolpica-F1**](https://github.com/jolpica/jolpica-f1) — the maintained successor to the retired Ergast API | Race results, championship points, finishing status, grid, qualifying, sprints, pit stops, lap timings, fastest-lap awards | 2000–2025 | Open API, Ergast lineage. Rate limited to 500 requests/hour |
+| [**FastF1**](https://github.com/theOehrly/Fast-F1) — reads Formula 1's live-timing service | Practice-session laps, tyre compounds, sector times, speed traps | 2018–2025 | MIT-licensed library; timing data © Formula 1 |
+
+**Attribution.** Race data originates from the Ergast Developer API lineage,
+now maintained as Jolpica-F1. Practice timing is retrieved through FastF1, which
+reads Formula One's official live-timing feed; that data remains the property of
+Formula 1. This project is unofficial and is not associated with, endorsed by,
+or affiliated with Formula 1, the FIA, or any team.
+
+`data/fastf1_practice_laps.csv` is committed so the build is reproducible
+offline. It is a derived extract — lap times, sectors and compounds — not a
+redistribution of the upstream feed, and it can be regenerated from scratch with
+`python -m backend.etl.practice`.
+
 ### Verification
 
 Spot-checked against known F1 history:
