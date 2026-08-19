@@ -33,10 +33,19 @@ OUT_CSV = REPO_ROOT / "data" / "jolpica_laptimes.csv"
 
 FIELDS = ["season", "round", "driver_id", "lap", "position", "time", "time_ms"]
 
-# m:ss.mmm is the only shape lap timings take in this source. h:mm:ss.mmm is
-# not matched on purpose: a lap that long does not exist, so a string of that
-# shape means something is wrong and should be reported, not parsed.
-_LAP_TIME = re.compile(r"^(?:(\d+):)?(\d{1,2})\.(\d{1,3})$")
+# Lap timings are m:ss.mmm, and occasionally h:mm:ss.mmm.
+#
+# The hour form was originally rejected on the grounds that "a lap that long
+# does not exist". It does. The 2011 Canadian Grand Prix was suspended for
+# just over two hours under red flag, and the source counts the stoppage
+# inside lap 25 -- so 35 timings from that race read 2:05:xx.xxx. Rejecting
+# them silently discarded a real lap from every driver who was running.
+#
+# This is the same assumption that failed once before, when a 33-minute lap at
+# the 2023 Australian Grand Prix looked implausible and was correct. A
+# suspended race has no upper bound on lap duration, so the parser must not
+# impose one.
+_LAP_TIME = re.compile(r"^(?:(?:(\d+):)?(\d{1,2}):)?(\d{1,2})\.(\d{1,3})$")
 
 
 def parse_lap_time(value: str) -> int | None:
@@ -48,9 +57,10 @@ def parse_lap_time(value: str) -> int | None:
     match = _LAP_TIME.match((value or "").strip())
     if not match:
         return None
-    minutes, seconds, millis = match.groups()
+    hours, minutes, seconds, millis = match.groups()
     return (
-        int(minutes or 0) * 60_000
+        int(hours or 0) * 3_600_000
+        + int(minutes or 0) * 60_000
         + int(seconds) * 1_000
         + int(millis.ljust(3, "0"))
     )

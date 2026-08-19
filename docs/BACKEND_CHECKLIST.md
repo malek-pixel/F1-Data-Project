@@ -1,27 +1,46 @@
 # Backend & Data — simple checklist
 
-Updated 2026-08-17. Every ✅ has evidence; nothing is ticked because it looks done.
+Updated 2026-08-19. Every ✅ has evidence; nothing is ticked because it looks done.
 
 **Check it yourself** (all pass right now):
 
 ```
-python -m pytest backend/tests -q       249 passed
+python -m pytest backend/tests -q       285 passed, 1 skipped
 cd frontend && npx vitest run            49 passed
 python -m backend.etl.audit              38 checks, 0 failed
-python supabase/verify_migrations.py     18/18 byte-exact
+python supabase/verify_migrations.py     21/21 byte-exact
 python -m backend.etl.crossvalidate      503 races, 0 discrepancies
-python -m backend.etl.laps --status      lap ingestion progress
+python -m backend.etl.laps --status       remaining: 0
+python -m backend.etl.practice --status   remaining: 0
 ```
 
 ---
 
-## 🔄 RUNNING RIGHT NOW — two downloads
+## ✅ INGESTION COMPLETE
 
-Two background fetches. Both **resumable**: nothing already downloaded is ever
-re-requested, so stopping and restarting costs only the time it was stopped.
+Both downloads finished. Nothing is running; nothing is pending.
 
-| | Downloading | Check progress |
+| Dataset | Rows | Coverage |
 |---|---|---|
+| Lap timings | 552,138 | **503/503 races**, 2000–2025 |
+| Practice laps | 211,257 | **519/519 sessions**, 2018–2025 |
+| Tyre compounds | 210,096 | 2018–2025 |
+| Sector times | 185,427 | 2018–2025 |
+| Fastest-lap awards | 8,725 | 2004–2025 |
+
+55 practice sessions hold no laps, and that is correct rather than missing:
+sprint weekends run one practice instead of three, and some sessions were
+scheduled but cancelled — 2019 Japanese FP3 for Typhoon Hagibis, 2020 Eifel FP1
+and FP2 for fog that grounded the medical helicopter.
+
+To re-verify at any time:
+
+```
+python -m backend.etl.laps --status        remaining: 0
+python -m backend.etl.practice --status    remaining: 0
+```
+
+---|---|---|
 | **Laps** | per-lap timings, all 503 races | `python -m backend.etl.laps --status` |
 | **Practice** | practice laps, tyres, sector times (2018+) | `python -m backend.etl.practice --status` |
 
