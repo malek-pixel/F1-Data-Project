@@ -1606,7 +1606,9 @@ table.data th.num {
 /* Record cards inside a grouped panel. */
 .record-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  /* min(track, 100%) as in .grid--kpi above -- a bare 280px minimum does not
+     fit a 320px viewport's content box and pushes the page sideways. */
+  grid-template-columns: repeat(auto-fill, minmax(min(280px, 100%), 1fr));
 }
 .record {
   padding: var(--s4) 20px;
@@ -1827,7 +1829,8 @@ table.data th.num {
 /* Metric definitions strip (mockup § 09). */
 .defs {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  /* See .grid--kpi: bare minmax(280px, ...) overflowed /dataset at 320px. */
+  grid-template-columns: repeat(auto-fill, minmax(min(280px, 100%), 1fr));
 }
 .defs__item {
   padding: var(--s3) var(--s4);
@@ -2002,7 +2005,9 @@ table.data th.num {
 /* Car library (mockup § 08): one card per constructor-season, grouped by team. */
 .car-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  /* Guarded like the grids above: 220px clears a 320px viewport today, but
+     only just, and the guard costs nothing where there is room. */
+  grid-template-columns: repeat(auto-fill, minmax(min(220px, 100%), 1fr));
 }
 .car-card {
   padding: var(--s4);

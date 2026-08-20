@@ -286,6 +286,21 @@ export interface StandingsRow {
   wins: number;
   podiums: number;
   entries: number;
+  /**
+   * Present only when the FIA applied a championship penalty to this row.
+   * `points` above is already the adjusted total; this carries what was
+   * scored and why it was reduced, so a changed number is never silent.
+   * Two rows in the dataset have it: McLaren 2007 (excluded) and Racing
+   * Point 2020 (-15).
+   */
+  penalty?: {
+    points_scored: number;
+    points_deducted: number;
+    /** True for a full exclusion rather than a fixed deduction. */
+    excluded: boolean;
+    reason: string;
+    evidence: string;
+  };
 }
 
 export interface Standings {

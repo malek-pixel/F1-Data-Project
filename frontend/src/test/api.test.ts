@@ -57,7 +57,7 @@ describe("api error handling", () => {
     respond("<html>502 Bad Gateway</html>", { status: 502 });
     const error = await api.get<never>("/x").catch((e: unknown) => e as ApiError);
     expect(error).toBeInstanceOf(ApiError);
-    expect(error.message).toMatch(/API is not responding/);
+    expect(error.message).toMatch(/temporarily unavailable/);
     // Never leaks the HTML body or a JSON parse error to the user.
     expect(error.message).not.toMatch(/html|SyntaxError/i);
   });
@@ -65,15 +65,16 @@ describe("api error handling", () => {
   it("keeps a bare status for 4xx bodies that carry no detail", async () => {
     respond("nope", { status: 418 });
     const error = await api.get<never>("/x").catch((e: unknown) => e as ApiError);
-    expect(error.message).toBe("Request failed (418)");
+    expect(error.message).toBe("That request could not be completed (418).");
   });
 
-  it("explains a dead backend rather than reporting a raw network failure", async () => {
+  it("explains a dropped connection in terms a reader can act on", async () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("Failed to fetch")));
-    await expect(api.get("/health")).rejects.toMatchObject({
-      message: "Could not reach the API. Is the backend running?",
-      retryable: true,
-    });
+    const error = await api.get<never>("/health").catch((e: unknown) => e as ApiError);
+    expect(error).toMatchObject({ retryable: true });
+    expect(error.message).toBe("Could not connect. Check your internet connection and try again.");
+    // The copy a visitor sees must not ask them about servers they do not run.
+    expect(error.message).not.toMatch(/backend|API|server|localhost/i);
   });
 
   it("returns parsed JSON on success", async () => {
