@@ -23,7 +23,9 @@ unless the credentials are present.
 from __future__ import annotations
 
 import os
+import time
 
+import psycopg
 import pytest
 
 # Imported for its side effect: populates os.environ from .env. Without it the
@@ -78,9 +80,29 @@ def _lite_rows(conn, sql: str) -> list[tuple]:
 
 
 def _pg_rows(conn, sql: str) -> list[tuple]:
-    with conn.cursor() as cur:
-        cur.execute(sql)
-        return [tuple(row) for row in cur.fetchall()]
+    """Fetch every row, retrying a dropped connection once.
+
+    The lap_times comparison streams 552,138 rows over one connection to a
+    hosted database, and the link occasionally drops mid-fetch -- observed as
+    a single parametrised case failing where the same query passed moments
+    later. That is a network blip, not a disagreement between the stores, and
+    reporting it as one sends the reader hunting for a data defect that is
+    not there.
+
+    Only connection-level failures are retried, and only once: a genuine
+    mismatch is deterministic and must still fail.
+    """
+    for attempt in range(2):
+        try:
+            with conn.cursor() as cur:
+                cur.execute(sql)
+                return [tuple(row) for row in cur.fetchall()]
+        except (psycopg.OperationalError, psycopg.InterfaceError):
+            if attempt:
+                raise
+            time.sleep(1)
+            conn = psycopg.connect(os.environ["SUPABASE_DB_URL"], connect_timeout=30)
+    raise AssertionError("unreachable")
 
 
 # ---------------------------------------------------------------------------
