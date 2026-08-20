@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import sqlite3
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Path, Query
 
 from .. import advanced, analytics
 from .. import backends, supabase_repo
@@ -198,7 +198,7 @@ def circuit_specialists(
 # --------------------------------------------------------------------------
 
 @router.get("/seasons/{season}/dominance", tags=["seasons"])
-def season_dominance(season: int, conn: sqlite3.Connection = Depends(get_db)):
+def season_dominance(season: int = Path(ge=1950, le=2100), conn: sqlite3.Connection = Depends(get_db)):
     """How concentrated a season's wins were, normalised by races held."""
     result = backends.serve(
         "season_dominance",

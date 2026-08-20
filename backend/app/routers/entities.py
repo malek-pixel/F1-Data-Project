@@ -12,7 +12,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from .. import analytics, backends, schemas, supabase_repo
-from ..db import fetch_one_or_404, get_db
+from ..db import MAX_ID, fetch_one_or_404, get_db
 
 router = APIRouter()
 
@@ -42,8 +42,8 @@ def list_drivers(
     conn: sqlite3.Connection = Depends(get_db),
     sort: SortKey = "wins",
     search: str | None = Query(None, max_length=100),
-    constructor_id: int | None = Query(None, ge=1),
-    min_entries: int = Query(1, ge=1),
+    constructor_id: int | None = Query(None, ge=1, le=MAX_ID),
+    min_entries: int = Query(1, ge=1, le=1000),
     page: dict = Depends(_pagination),
     seasons: dict = Depends(_season_range),
 ):
@@ -124,7 +124,7 @@ def list_constructors(
     conn: sqlite3.Connection = Depends(get_db),
     sort: SortKey = "wins",
     search: str | None = Query(None, max_length=100),
-    min_entries: int = Query(1, ge=1),
+    min_entries: int = Query(1, ge=1, le=1000),
     page: dict = Depends(_pagination),
     seasons: dict = Depends(_season_range),
 ):

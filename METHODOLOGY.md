@@ -215,6 +215,44 @@ the API returns the information needed to say so rather than a verdict.
 | Coverage starts at 2000 | All records are "within 2000–2025", never all-time |
 | Season lengths vary (16–24 races) | Cross-era season totals are not normalised; records state this |
 | Constructor identity | Entities follow the source's naming, which already groups Ergast-style (Sauber ↔ BMW Sauber ↔ Alfa Romeo are separate rows). Distinct constructors are never merged without evidence. |
+| Championship penalties are not in the results | See §6.1 below. Two constructor totals cannot be reached by summing race results. |
+
+### 6.1 Championship penalties
+
+A championship penalty is applied by the FIA to the **championship**, not to
+the race classifications it is summed from. The source carries the race
+results — correct, and unchanged by the penalty — and carries no record of the
+deduction. Constructor standings are derived by summing driver points, so for
+two seasons that sum disagreed with the official final table, and in one of
+them it named the wrong champion.
+
+| Season | Constructor | Scored | Official | Penalty |
+|---|---|---|---|---|
+| 2007 | McLaren | 218 | **0** | Excluded from the Constructors' Championship (FIA WMSC, 13 Sept 2007). Ferrari won the title with 204. |
+| 2020 | Racing Point | 210 | **195** | 15 points deducted (FIA Stewards, Styrian GP, brake-duct protest upheld). Position (4th) unchanged. |
+
+How this is handled:
+
+* The penalty is modelled as **the deduction**, in
+  `analytics.CONSTRUCTOR_PENALTIES` — not as a hand-entered final total. The
+  total is still derived: sum the results, then apply what the FIA applied. A
+  typed-in total could not be checked against anything.
+* One table serves **both backends**, so SQLite and Supabase cannot disagree
+  about a championship.
+* **Race wins and podiums are not adjusted.** McLaren won eight races in 2007
+  and those races happened; the exclusion removed championship points, not
+  results. The row reads "0 points, 8 wins", which is the sporting outcome as
+  the record holds it.
+* **Driver points are untouched** — explicitly unaffected in both cases, which
+  is why the driver standings already reconciled exactly for all 26 seasons.
+* An adjusted row carries a `penalty` object through the API and into the
+  frontend types, holding what was scored, what was removed, and the evidence.
+  A number that changed for a reason the reader cannot see is the thing this
+  project treats as fabrication.
+
+Pinned by `backend/tests/test_api.py` against the official classifications,
+including unpenalised seasons on either side so the correction cannot quietly
+start applying where it does not belong.
 
 ---
 

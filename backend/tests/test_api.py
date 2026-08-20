@@ -494,3 +494,121 @@ def test_slug_and_legacy_id_return_the_same_subresource(client, template):
     )
     assert by_slug.status_code == by_id.status_code == 200
     assert by_slug.json() == by_id.json()
+
+
+# ---------------------------------------------------------------------------
+# Oversized integers in URLs
+#
+# A number wider than SQLite's signed 64-bit integer used to reach the driver
+# and raise OverflowError. That is not sqlite3.Error, so the API's database
+# handler never caught it and the request died as a bare 500 with no `detail`
+# body -- the one shape the client cannot render, and one it would offer to
+# retry forever because it classifies 5xx as retryable.
+#
+# Nothing here asserts a specific 404-vs-422 split: both are correct refusals
+# and which one applies depends on whether the id is a path segment or a
+# bounded query parameter. What must hold is that no such URL reaches 5xx and
+# that every refusal still carries `detail`.
+# ---------------------------------------------------------------------------
+
+OVERSIZED = "9" * 25
+
+OVERSIZED_URLS = [
+    f"/api/drivers/{OVERSIZED}",
+    f"/api/drivers/{OVERSIZED}/seasons",
+    f"/api/constructors/{OVERSIZED}",
+    f"/api/constructors/{OVERSIZED}/drivers",
+    f"/api/circuits/{OVERSIZED}",
+    f"/api/races/{OVERSIZED}",
+    f"/api/seasons/{OVERSIZED}",
+    f"/api/seasons/{OVERSIZED}/rounds",
+    f"/api/seasons/{OVERSIZED}/standings",
+    f"/api/seasons/{OVERSIZED}/dominance",
+    f"/api/races?circuit_id={OVERSIZED}",
+    f"/api/drivers?constructor_id={OVERSIZED}",
+    f"/api/drivers?min_entries={OVERSIZED}",
+]
+
+
+@pytest.mark.parametrize("url", OVERSIZED_URLS)
+def test_oversized_id_is_refused_not_crashed(client, url):
+    response = client.get(url)
+    assert response.status_code in (404, 422), f"{url} -> {response.status_code}"
+    assert "detail" in response.json()
+
+
+def test_ordinary_ids_and_slugs_still_resolve(client):
+    """Guards the bound itself: a real id must not be caught by it."""
+    assert client.get("/api/drivers/48").status_code == 200
+    assert client.get("/api/drivers/hamilton").status_code == 200
+    assert client.get("/api/races/1").status_code == 200
+    assert client.get("/api/seasons/2021").status_code == 200
+    assert client.get("/api/races?circuit_id=1").status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# Championship reconciliation
+#
+# Constructor standings are summed from race results, and a championship
+# penalty is applied to the championship rather than to the results. Summing
+# alone therefore named McLaren the 2007 constructors' champion, which is
+# false. These cases pin the two seasons where derivation and record diverge,
+# plus unpenalised seasons on either side so the correction cannot quietly
+# start applying where it does not belong.
+# ---------------------------------------------------------------------------
+
+OFFICIAL_CONSTRUCTOR_POINTS = {
+    # (season, constructor name): official final championship points
+    (2007, "Ferrari"): 204.0,
+    (2007, "McLaren"): 0.0,       # excluded; scored 218
+    (2007, "BMW Sauber"): 101.0,
+    (2020, "Mercedes"): 573.0,
+    (2020, "Racing Point"): 195.0,  # 210 scored, 15 deducted
+    (2020, "Renault"): 181.0,
+    (2009, "Brawn"): 172.0,
+    (2021, "Mercedes"): 613.5,
+    (2024, "McLaren"): 666.0,
+}
+
+
+@pytest.mark.parametrize("key,expected", sorted(OFFICIAL_CONSTRUCTOR_POINTS.items()))
+def test_constructor_points_match_official(client, key, expected):
+    season, name = key
+    table = client.get(f"/api/seasons/{season}/standings").json()["constructors"]
+    row = next((r for r in table if r["name"] == name), None)
+    assert row is not None, f"{name} missing from {season} constructors"
+    assert row["points"] == pytest.approx(expected)
+
+
+@pytest.mark.parametrize(
+    "season,champion",
+    [(2007, "Ferrari"), (2009, "Brawn"), (2020, "Mercedes"), (2024, "McLaren")],
+)
+def test_constructor_champion_is_the_real_one(client, season, champion):
+    table = client.get(f"/api/seasons/{season}/standings").json()["constructors"]
+    assert table[0]["name"] == champion
+
+
+def test_penalty_is_visible_not_silent(client):
+    """A total that was reduced must say so, and must not lose the races won."""
+    table = client.get("/api/seasons/2007/standings").json()["constructors"]
+    mclaren = next(r for r in table if r["name"] == "McLaren")
+    assert mclaren["points"] == 0.0
+    assert mclaren["wins"] == 8, "the exclusion removed points, not race wins"
+    penalty = mclaren["penalty"]
+    assert penalty["excluded"] is True
+    assert penalty["points_scored"] == 218.0
+    assert penalty["reason"] and penalty["evidence"]
+
+
+def test_unpenalised_seasons_carry_no_penalty_field(client):
+    table = client.get("/api/seasons/2024/standings").json()["constructors"]
+    assert all("penalty" not in row for row in table)
+
+
+def test_driver_standings_are_untouched_by_constructor_penalties(client):
+    """2007 driver points were explicitly unaffected by McLaren's exclusion."""
+    drivers = client.get("/api/seasons/2007/standings").json()["drivers"]
+    assert drivers[0]["name"].endswith("Räikkönen")
+    assert drivers[0]["points"] == pytest.approx(110.0)
+    assert [d["points"] for d in drivers[1:3]] == [pytest.approx(109.0), pytest.approx(109.0)]

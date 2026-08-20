@@ -81,6 +81,7 @@ import decimal
 import logging
 import re
 import sqlite3
+from typing import NamedTuple
 
 # Minimum entries before a rate or average is treated as comparable. Below
 # this, a driver with 2 entries and 1 win reads as a 50% win rate, which is
@@ -499,6 +500,116 @@ def leaderboard(
 # Season / race views
 # --------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Championship penalties
+#
+# Constructor standings are derived by summing the points its drivers scored.
+# That is right for every season here but two, because a championship penalty
+# is applied by the FIA to the *championship*, not to the race classifications
+# it came from. The source carries the race results, which are correct and
+# stay correct; nothing in them records the deduction. Summing alone therefore
+# produced two wrong totals, one of which named the wrong 2007 constructors'
+# champion -- McLaren, ahead of Ferrari, who actually won it.
+#
+# This table is the deduction itself, not a hand-entered final total. The total
+# is still derived: sum the results, then apply what the FIA applied. A
+# corrected total that was simply typed in here could not be checked against
+# anything, which is the failure mode the rest of this module avoids.
+#
+# Race wins and podiums are deliberately NOT adjusted. McLaren won eight races
+# in 2007 and those races happened; the exclusion removed championship points,
+# not results. A reader looking at "0 points, 8 wins" is seeing the sporting
+# outcome exactly as the record holds it.
+#
+# Drivers are unaffected in both cases -- Alonso and Hamilton kept their 2007
+# points, which is why the driver standings already reconciled exactly.
+# ---------------------------------------------------------------------------
+
+class ChampionshipPenalty(NamedTuple):
+    """One FIA championship penalty. `points_deducted` is None for a full
+    exclusion, where every point is removed rather than a fixed number."""
+
+    points_deducted: float | None
+    reason: str
+    evidence: str
+
+
+CONSTRUCTOR_PENALTIES: dict[tuple[int, str], ChampionshipPenalty] = {
+    (2007, "mclaren"): ChampionshipPenalty(
+        points_deducted=None,
+        reason="Excluded from the 2007 Constructors' Championship.",
+        evidence=(
+            "FIA World Motor Sport Council, 13 September 2007: McLaren excluded "
+            "from the 2007 Constructors' Championship and scored no constructor "
+            "points. Driver points were explicitly unaffected. Applying it "
+            "reproduces the official final table exactly -- Ferrari 204, "
+            "BMW Sauber 101, Renault 51 -- all of which this dataset already "
+            "matched before the penalty was modelled."
+        ),
+    ),
+    (2020, "racing_point"): ChampionshipPenalty(
+        points_deducted=15.0,
+        reason="15-point constructors' deduction (brake duct protest).",
+        evidence=(
+            "FIA Stewards, Styrian Grand Prix 2020, protest by Renault upheld: "
+            "15 points deducted from Racing Point's constructors' total. "
+            "210 scored - 15 = 195, the official final total, and the position "
+            "(4th) is unchanged either way."
+        ),
+    ),
+}
+
+
+def apply_constructor_penalties(rows: list[dict], season: int, slug_key: str) -> list[dict]:
+    """Apply any championship penalty for `season`, then re-rank.
+
+    Re-ranking is not optional: a deduction that changes a total can change
+    the order, and 2007 is exactly that case. Rows are returned re-sorted on
+    the same tiebreak the callers use, with `position` renumbered.
+
+    An affected row carries a `penalty` object. The adjustment is never
+    silent -- a number that changed for a reason the reader cannot see is the
+    thing this project treats as fabrication.
+    """
+    if not any((season, row.get(slug_key)) in CONSTRUCTOR_PENALTIES for row in rows):
+        return rows
+
+    adjusted = []
+    for row in rows:
+        penalty = CONSTRUCTOR_PENALTIES.get((season, row.get(slug_key)))
+        if penalty is None:
+            adjusted.append(row)
+            continue
+
+        scored = row.get("points") or 0.0
+        deducted = scored if penalty.points_deducted is None else penalty.points_deducted
+        row = dict(row)
+        row["points"] = round(scored - deducted, 2)
+        row["penalty"] = {
+            "points_scored": round(scored, 2),
+            "points_deducted": round(deducted, 2),
+            "excluded": penalty.points_deducted is None,
+            "reason": penalty.reason,
+            "evidence": penalty.evidence,
+        }
+        adjusted.append(row)
+
+    adjusted.sort(
+        key=lambda r: (
+            -(r.get("points") or 0.0),
+            -(r.get("wins") or 0),
+            -(r.get("podiums") or 0),
+            r.get(slug_key) or "",
+        )
+    )
+    for index, row in enumerate(adjusted, start=1):
+        if "position" in row:
+            row["position"] = index
+        if "points_rank" in row:
+            row["points_rank"] = index
+    return adjusted
+
+
 def standings(conn: sqlite3.Connection, season: int, entity: str = "driver") -> list[dict]:
     """Championship standings for a season. Calculated, never stored.
 
@@ -513,7 +624,10 @@ def standings(conn: sqlite3.Connection, season: int, entity: str = "driver") -> 
     exactly 7/21/45/38/29 -- which is how the missing sprint dataset was found.
 
     Verified against the official standings for all 26 seasons: champion and
-    exact points total both match.
+    exact points total both match. That verification originally covered the
+    driver championship only, and the constructors' table was wrong for two
+    seasons until CONSTRUCTOR_PENALTIES was added -- summing race points
+    cannot see a penalty the FIA applied to the championship.
 
     CAVEAT, and the reason `position` is not called `championship_position`:
     ties are broken here by wins, then podiums. The official rule is a
@@ -547,7 +661,7 @@ def standings(conn: sqlite3.Connection, season: int, entity: str = "driver") -> 
         [season, season],
     ).fetchall()
 
-    return [
+    ranked = [
         {
             "position": index,
             "id": row["id"],
@@ -564,6 +678,12 @@ def standings(conn: sqlite3.Connection, season: int, entity: str = "driver") -> 
         }
         for index, row in enumerate(rows, start=1)
     ]
+
+    # Constructors only: a championship penalty is applied to the standings,
+    # never to the results they are summed from. See CONSTRUCTOR_PENALTIES.
+    if entity != "driver":
+        ranked = apply_constructor_penalties(ranked, season, "slug")
+    return ranked
 
 
 def qualifying_coverage_from(conn: sqlite3.Connection) -> int | None:

@@ -392,6 +392,12 @@ def standings(season: int, entity: str = "driver") -> list[dict]:
         # alone put them in different orders on the two stores.
         order=f"points.desc,wins.desc,podiums.desc,{slug_column}.asc",
     )
+    if entity != "driver":
+        # Same penalty table as the SQLite leg, so the two stores cannot
+        # disagree about a championship. Applied here rather than in the view
+        # because the deduction is a documented fact about the championship,
+        # not a column either store holds.
+        rows = analytics.apply_constructor_penalties(rows, season, slug_column)
     return rows
 
 

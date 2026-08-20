@@ -3,10 +3,10 @@ from __future__ import annotations
 
 import sqlite3
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Path, Query
 
 from .. import analytics, backends, schemas, supabase_repo
-from ..db import fetch_one_or_404, get_db
+from ..db import MAX_ID, fetch_one_or_404, get_db
 
 router = APIRouter()
 
@@ -62,7 +62,7 @@ def list_seasons(conn: sqlite3.Connection = Depends(get_db)):
 
 
 @router.get("/seasons/{season}", tags=["seasons"])
-def get_season(season: int, conn: sqlite3.Connection = Depends(get_db)):
+def get_season(season: int = Path(ge=1950, le=2100), conn: sqlite3.Connection = Depends(get_db)):
     """Season detail: the championship standings, plus wins-ordered tables.
 
     Two different things are returned and they must not be conflated.
@@ -100,7 +100,7 @@ def get_season(season: int, conn: sqlite3.Connection = Depends(get_db)):
 
 
 @router.get("/seasons/{season}/rounds", tags=["seasons"])
-def get_season_rounds(season: int, conn: sqlite3.Connection = Depends(get_db)):
+def get_season_rounds(season: int = Path(ge=1950, le=2100), conn: sqlite3.Connection = Depends(get_db)):
     """Calendar order with each round's winner. Powers the round-by-round strip.
 
     `winner_driver` is null for a round the source carries no position-1 row
@@ -121,7 +121,7 @@ def get_season_rounds(season: int, conn: sqlite3.Connection = Depends(get_db)):
 def list_races(
     conn: sqlite3.Connection = Depends(get_db),
     season: int | None = Query(None, ge=1950, le=2100),
-    circuit_id: int | None = Query(None, ge=1),
+    circuit_id: int | None = Query(None, ge=1, le=MAX_ID),
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
 ):
@@ -158,7 +158,7 @@ def list_races(
 
 
 @router.get("/races/{race_id}", tags=["races"])
-def get_race(race_id: int, conn: sqlite3.Connection = Depends(get_db)):
+def get_race(race_id: int = Path(ge=1, le=MAX_ID), conn: sqlite3.Connection = Depends(get_db)):
     """Full race weekend: classification, qualifying, sprint and pit stops.
 
     Each session reports its own availability rather than returning a bare
@@ -267,7 +267,7 @@ def get_race(race_id: int, conn: sqlite3.Connection = Depends(get_db)):
 
 
 @router.get("/seasons/{season}/standings", tags=["seasons"])
-def get_standings(season: int, conn: sqlite3.Connection = Depends(get_db)):
+def get_standings(season: int = Path(ge=1950, le=2100), conn: sqlite3.Connection = Depends(get_db)):
     """Championship standings: race points plus sprint points.
 
     These ARE the championship, unlike the wins-ordered tables on

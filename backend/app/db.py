@@ -40,6 +40,20 @@ LOOKUP_TABLES = frozenset({"drivers", "constructors", "circuits", "races"})
 # has no slug column, its natural key being (season, round).
 SLUGGED_TABLES = frozenset({"drivers", "constructors", "circuits"})
 
+# SQLite stores integers as signed 64-bit. Binding anything wider raises
+# OverflowError from the driver -- not sqlite3.Error, so the API's database
+# handler never saw it and the request died as a bare 500 with no `detail`
+# body, against the contract every other failure here keeps. A URL carrying
+# a number this large is simply asking for a row that cannot exist, so it is
+# a 404 like any other unknown id, not a server fault.
+SQLITE_MAX_INT = 2**63 - 1
+SQLITE_MIN_INT = -(2**63)
+
+# Upper bound for an id arriving in a URL. Same reasoning as above, stated as
+# its own name because routers bind it with `le=` and reading `MAX_ID` at a
+# call site is clearer than reading a power of two.
+MAX_ID = SQLITE_MAX_INT
+
 
 def fetch_one_or_404(
     conn: sqlite3.Connection, table: str, entity_id: int | str
@@ -65,6 +79,8 @@ def fetch_one_or_404(
     key = str(entity_id)
     if key.isdigit():
         column, value = "id", int(key)
+        if not SQLITE_MIN_INT <= value <= SQLITE_MAX_INT:
+            raise HTTPException(status_code=404, detail=f"No {table[:-1]} {entity_id!r}")
     elif table in SLUGGED_TABLES:
         column, value = "slug", key
     else:
