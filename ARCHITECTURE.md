@@ -13,6 +13,11 @@ data/f1.db                     SQLite build artefact, not tracked in git
     ├── backend/app/analytics.py   source of truth for CALCULATIONS
     ├── backend/app/routers/       REST surface, input validation
     ▼
+    │
+    ├── supabase/migrations/*.sql  the same data as Postgres views
+    ▼
+backends.serve() ── picks the store per request (F1_BACKEND)
+    │
 FastAPI (:8000)  ── /api ──▶  React + Vite (:5173)   presentation only
 ```
 
@@ -66,6 +71,29 @@ patterns are escaped. Nothing is interpolated into SQL.
 
 Connections open in SQLite read-only mode (`mode=ro`). A bug in a router raises
 rather than corrupting the dataset.
+
+### `backend/app/backends.py` — which store answers
+
+The same dataset is materialised twice: `data/f1.db` (SQLite, rebuilt from the
+CSV) and a hosted Postgres project (Supabase, read over PostgREST). `F1_BACKEND`
+selects between them per request.
+
+`serve(endpoint, sqlite_impl, supabase_impl)` runs whichever the active backend
+provides and **raises rather than falling back**. A silent fallback would let
+the Supabase leg appear to work while never being exercised — which is exactly
+what happened for as long as two thirds of the routes never called `serve` at
+all, and what the payload-parity suite failed to catch while it was comparing
+one store against itself.
+
+28 of 30 routes dispatch. `/api/insights` has no Postgres implementation and
+returns 501 under Supabase; `/api/analytics/metrics` returns Python constants
+and touches no store. `test_api_payload_parity.py` compares 77 request paths
+across both stores, response for response.
+
+The metric definitions live in `analytics.py` for SQLite and in the migration
+views for Postgres. Where a definition would otherwise be written twice — the
+record list, the dominance basis string, the rounding rule — it is a shared
+Python constant that both legs read.
 
 ### `frontend/` — presentation
 
@@ -121,7 +149,14 @@ the schema, surface it. Update `METHODOLOGY.md` in the same change.
 without reshaping existing tables. The Car Library page is already built against
 that absence and will render real fields when they exist.
 
-**Adding qualifying/points/status:** these unlock the largest set of currently
-impossible metrics — championship standings, DNF rate, points-per-race, pole
-rate. They require new source columns; nothing in the current pipeline
-approximates them.
+**Qualifying, points and status are ingested.** This section used to say they
+were the missing columns behind "the largest set of currently impossible
+metrics — championship standings, DNF rate, points-per-race, pole rate". All
+of it is now served: `points` and `classification` on all 10,550 results,
+9,577 qualifying rows, 552,138 lap timings, 12,192 pit stops, and the
+fastest-lap enrichment for 2004 onward. Standings reproduce the official
+champion and points total for every covered season.
+
+Pole position remains genuinely absent *as such*: qualifying P1 is counted and
+labelled `qualifying_p1`, because the two diverge in the sprint era and the
+field name has to say what was measured.

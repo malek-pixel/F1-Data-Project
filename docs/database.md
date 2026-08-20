@@ -1,13 +1,22 @@
 # Database
 
-> **Status: built, not wired in.** The application you get by following
-> [README.md](../README.md) serves every request from the local SQLite build
-> (`data/f1.db`). The Supabase schema below is real and reproducible from its
-> migrations, and `backend/app/supabase_repo.py` reads it, but no router calls
-> that module today — see the status note at the top of the file. Both stores
-> are built from the same `results.csv` by the same validation rules, so the
-> numbers agree; only the SQLite path is exercised by the running app and by
-> the 109 tests that execute on a fresh clone.
+> **Status: wired and compared.** `F1_BACKEND` selects the store per request.
+> 28 of the 30 routes dispatch through `backends.serve`, and
+> `test_api_payload_parity.py` compares 77 request paths across both stores,
+> response for response. `/api/insights` has no Postgres implementation and
+> returns 501 under Supabase rather than quietly serving the SQLite answer;
+> `/api/analytics/metrics` reads no store at all.
+>
+> This banner used to read "**built, not wired in** ... no router calls that
+> module today". It was accurate when written. It stayed on the page after it
+> stopped being true, which is the same failure the rest of this repository
+> keeps having with prose about absent data.
+>
+> SQLite remains the default and the only leg with no external dependency, so
+> a fresh clone still builds and serves without credentials. Both stores are
+> built from the same `results.csv` by the same validation rules. Without
+> `SUPABASE_URL` / `SUPABASE_ANON_KEY` the Supabase suites skip, and a skip is
+> missing coverage rather than a pass.
 
 Supabase / PostgreSQL 17 is the PostgreSQL materialisation of the dataset.
 

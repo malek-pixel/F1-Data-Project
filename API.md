@@ -30,8 +30,13 @@ Every derived number comes from `backend/app/analytics.py`. Definitions are in
 - Rates are `null` when `entries` is 0, and `0.0` when there are entries but no wins. These are different facts.
 - `rates_reliable` is `false` below 10 entries. The value is still returned; clients mark it rather than hiding it.
 
+List items additionally carry `id`, `slug`, `name` and `nationality`, so a
+listing renders without a request per row.
+
 **Errors** return `{"detail": "..."}` with a real status code. Database faults
-log server-side and return a generic 503 — internals are never exposed.
+log server-side and return a generic 503 — internals are never exposed. This
+holds for both stores: a Supabase outage is a 503 with a `detail` body, not a
+bare 500, and neither the URL nor the key appears in the response.
 
 | Status | Meaning |
 |---|---|
@@ -39,11 +44,26 @@ log server-side and return a generic 503 — internals are never exposed.
 | 400 | Semantically invalid (e.g. comparing an entity with itself) |
 | 404 | No such entity |
 | 422 | Failed parameter validation (unknown sort key, out-of-range limit) |
+| 501 | The active data store has no implementation for this endpoint. **Not retryable** — nothing is broken |
 | 503 | Data store unavailable — retryable |
 
 **Pagination.** List endpoints take `limit` (1–200, default 50) and `offset`,
 returning `{total, limit, offset, items}`. `total` is the count *before*
-pagination but *after* filtering.
+pagination but *after* filtering. An offset past the last row is an empty
+`items` with the real `total` — not an error, on either store.
+
+**Sort order is total.** Every sort ends in the entity slug, so two entities
+level on the named columns cannot come back in an arbitrary order and a page
+boundary is stable across requests and across stores.
+
+**Identifiers.** `id` is assigned independently by each store and means
+nothing across them — Hamilton is 48 in SQLite and 65 in Postgres. **Link on
+`slug`.** Endpoints accept either, and legacy numeric URLs keep resolving.
+
+**Which store answered** is reported by `/api/health` as `backend`. 28 of the
+30 routes dispatch through the backend switch and are compared response for
+response by `test_api_payload_parity.py`; `/api/insights` returns 501 under
+Supabase and `/api/analytics/metrics` reads no store at all.
 
 **Sorting.** `sort` accepts `wins`, `podiums`, `entries`, `win_rate`,
 `podium_rate`, `avg_position`, `name`. Anything else is a 422 — the ORDER BY

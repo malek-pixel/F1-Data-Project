@@ -63,12 +63,21 @@ FastAPI                opens the DB read-only; all calculation lives in
 React + TypeScript     presentation and formatting only; derives no metric
 ```
 
-**SQLite is the production data store.** A PostgreSQL/Supabase materialisation
-of the same CSV exists and is documented in [docs/database.md](docs/database.md),
-but **no router calls it** — it is not on any request path, its 24 tests skip
-without credentials, and it is not re-verifiable from this repository. See
-`backend/app/supabase_repo.py` for its status. Nothing in the setup below
-requires it.
+**Two stores, one dataset.** The same CSV is materialised as `data/f1.db`
+(SQLite) and as a hosted Postgres project (Supabase). `F1_BACKEND` selects
+which one answers, per request, and **28 of 30 routes dispatch through it** —
+`test_api_payload_parity.py` compares 77 request paths across both stores,
+response for response.
+
+This paragraph used to say "**no router calls it** — it is not on any request
+path". That was true when written and stopped being true without the sentence
+changing, which is the failure this project keeps having.
+
+SQLite remains the default, and is the only leg with no external dependency: a
+fresh clone builds and serves without credentials. Nothing in the setup below
+requires Supabase. The 24 tests that exercise it skip when
+`SUPABASE_URL` / `SUPABASE_ANON_KEY` are unset, and a skip is missing coverage
+rather than a pass. Schema and migrations: [docs/database.md](docs/database.md).
 
 ---
 
@@ -128,7 +137,9 @@ cd frontend && npm run build           # production bundle into frontend/dist
 | `test_api.py` | Contract: 422s, 404s, empty results, pagination, wildcard escaping |
 | `test_advanced.py` | Teammate/distribution/dominance formulas, hand-computed in the fixture comments |
 | frontend | Null-vs-zero formatting, states, sorting, error handling |
-| `test_supabase.py` | **24 cases, all skipped without credentials.** They test the unwired PostgreSQL path, so a green run says nothing about it |
+| `test_supabase.py` | Schema, RLS and the public-key boundary on the hosted project. Skips without credentials — a skip is missing coverage, not a pass |
+| `test_api_payload_parity.py` | **77 request paths, both backends, response for response.** The suite that has to be green before "the Supabase leg works" means anything |
+| `test_store_parity.py` / `test_backend_parity.py` | The two databases hold the same rows; the two implementations compute the same numbers |
 
 Analytics tests run against a fixture, not the real database — asserting a
 formula is correct requires numbers verifiable by hand.
@@ -232,19 +243,22 @@ previous page under a dozen back-button steps while the URL stays shareable.
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Layers, the calculation-locality rule, extension points |
 | [DATA_DICTIONARY.md](DATA_DICTIONARY.md) | Every column, table and derived field |
 | [API.md](API.md) | Endpoints, parameters, error contract |
-| [docs/database.md](docs/database.md) | PostgreSQL/Supabase schema and migrations — **built, not wired in**: the running app serves from SQLite |
+| [docs/database.md](docs/database.md) | PostgreSQL/Supabase schema and migrations |
+| [docs/frontend-data-contract.md](docs/frontend-data-contract.md) | Page → data → source → transformation → UI, and which store answers what |
+| [docs/qa-matrix.md](docs/qa-matrix.md) | What was tested in the integration phase, and what was not |
 
 ---
 
 ## Known limitations
 
 - Coverage begins in 2000 — no figure here is an all-time Formula 1 record
-- No finishing status, so reliability and DNF metrics are impossible
+- Telemetry and car specifications are absent from every source this project ingests; the `cars` table exists and is deliberately empty
+- Pole position is not recorded as such. Qualifying P1 is counted and labelled `qualifying_p1`: the two diverge in the sprint era
 - Season lengths vary 16–24 races; cross-era season totals are not normalised
 - The 2002 French GP carries 20 rows but runs to P22 — an upstream omission, reported by the validator rather than patched
 - `circuit_map.csv` encodes external knowledge, not source data; it should be reviewed when a season is added
 - Data is static. Nothing is live, and no screen implies an in-progress race
-- The PostgreSQL/Supabase schema in `docs/database.md` cannot be rebuilt from this repository: no migration files are checked in, and its tests skip without credentials
+- The Supabase leg needs credentials: without them its tests skip and parity is unverified rather than verified-good. The 24 migrations are checked in and `python supabase/verify_migrations.py` checks each file against the SQL the database recorded as applied
 
 ## Roadmap
 
