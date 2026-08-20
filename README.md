@@ -246,6 +246,7 @@ previous page under a dozen back-button steps while the URL stays shareable.
 | [docs/database.md](docs/database.md) | PostgreSQL/Supabase schema and migrations |
 | [docs/frontend-data-contract.md](docs/frontend-data-contract.md) | Page → data → source → transformation → UI, and which store answers what |
 | [docs/qa-matrix.md](docs/qa-matrix.md) | What was tested in the integration phase, and what was not |
+| [docs/OPERATIONS.md](docs/OPERATIONS.md) | Recovery, migration safety, the access model, deployment and monitoring |
 
 ---
 
@@ -258,6 +259,9 @@ previous page under a dozen back-button steps while the URL stays shareable.
 - The 2002 French GP carries 20 rows but runs to P22 — an upstream omission, reported by the validator rather than patched
 - `circuit_map.csv` encodes external knowledge, not source data; it should be reviewed when a season is added
 - Data is static. Nothing is live, and no screen implies an in-progress race
+- Driver portraits, car photos and team logos are third-party images. They are fine for an internal analyst tool; **a public deployment needs the rights cleared first** — see [docs/CAR_PHOTOS.md](docs/CAR_PHOTOS.md)
+- There is no monitoring, error reporting or alerting. If the deployed app breaks, nothing tells anyone — see [docs/OPERATIONS.md](docs/OPERATIONS.md) §6
+- Constructor standings apply two documented FIA championship penalties (McLaren 2007, Racing Point 2020) that cannot be reached by summing race results — see [METHODOLOGY.md](METHODOLOGY.md) §6.1
 - The Supabase leg needs credentials: without them its tests skip and parity is unverified rather than verified-good. The 24 migrations are checked in and `python supabase/verify_migrations.py` checks each file against the SQL the database recorded as applied
 
 ## Roadmap
