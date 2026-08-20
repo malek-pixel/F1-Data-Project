@@ -91,7 +91,11 @@ export function DataTable<T>({
                     aria-label={`Sort by ${column.header}`}
                   >
                     {column.header}
-                    <span aria-hidden="true">{active ? "▾" : ""}</span>
+                    {/* Always rendered, so revealing it on hover cannot shift
+                        the header's layout. Visibility is CSS-only. */}
+                    <span className="sort-btn__caret" aria-hidden="true">
+                      ▾
+                    </span>
                   </button>
                 ) : (
                   column.header

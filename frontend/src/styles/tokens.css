@@ -27,6 +27,12 @@
   --success: #22c55e;
   --warning: #f59e0b;
 
+  /* Hairline separators and technical rules. Previously each site of use
+     picked its own rgb(...) alpha, which is why some dividers read heavier
+     than others at the same nominal weight. */
+  --line: rgb(255 255 255 / 0.06);
+  --line-strong: rgb(255 255 255 / 0.11);
+
   /* 8pt grid */
   --s1: 4px;
   --s2: 8px;
@@ -35,9 +41,66 @@
   --s5: 24px;
   --s6: 32px;
   --s7: 48px;
+  /* Section rhythm. The scale used to stop at 48px, so the gap between two
+     major page sections and the gap between two cards inside one were drawn
+     from the same token -- which is why the pages read as an undifferentiated
+     stack rather than as grouped sections. */
+  --s8: 64px;
+  --s9: 96px;
 
   --radius: 8px;
   --radius-sm: 6px;
+  /* Matches --radius plus a 2px offset, so a focus ring drawn outside a card
+     is concentric with it instead of cutting its corners. */
+  --radius-focus: 10px;
+
+  /* ---------- Elevation ----------
+     Four steps, and nothing between them. Five ad-hoc box-shadow values were
+     in use (0 4px 14px/.3, 0 6px 20px/.45, 0 8px 28px/.35 ...) with no
+     relationship to each other: a dropdown cast a softer shadow than a card
+     it floated above, which reads as a depth error even when nobody can name
+     it. Ambient + direct in each step, because a single large blur on a
+     near-black background turns into a grey smear rather than a shadow. */
+  --shadow-1:
+    0 1px 2px rgb(0 0 0 / 0.4),
+    0 2px 6px rgb(0 0 0 / 0.24);
+  --shadow-2:
+    0 2px 4px rgb(0 0 0 / 0.4),
+    0 8px 24px rgb(0 0 0 / 0.36);
+  --shadow-3:
+    0 4px 8px rgb(0 0 0 / 0.44),
+    0 16px 40px rgb(0 0 0 / 0.44);
+  --shadow-4:
+    0 8px 16px rgb(0 0 0 / 0.48),
+    0 28px 68px rgb(0 0 0 / 0.52);
+
+  /* ---------- Motion ----------
+     Moved here from app.css, where two of the three tokens lived while
+     motion.tsx hardcoded its own 0.18 / 0.25 / 0.35 durations -- one motion
+     system described in two places and agreeing in neither. The tiers below
+     match the component durations so a hover, a reveal and a route change
+     read as the same hand. */
+  --ease: cubic-bezier(0.22, 1, 0.36, 1); /* decelerate; the default */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1); /* entrances */
+  --ease-in: cubic-bezier(0.4, 0, 1, 1); /* exits */
+  --t-micro: 0.1s; /* press, tick, colour snap */
+  --t-fast: 0.14s; /* hover */
+  --t-base: 0.22s; /* component state change */
+  --t-slow: 0.36s; /* section reveal */
+
+  /* ---------- Stacking ----------
+     Named so a new overlay does not get a number by guessing higher than the
+     last one somebody guessed.
+
+     The values preserve the ordering that was already in force rather than
+     imposing a tidier one: the status island really does sit above the
+     command palette (60 > 50), because it reports store health and a reader
+     searching during an outage needs to see it. */
+  --z-base: 1;
+  --z-sticky: 20; /* sticky table headers */
+  --z-modal: 50; /* command palette scrim */
+  --z-island: 60; /* dock tooltip, status island */
+  --z-skip: 100; /* skip link, above everything */
 
   --font: "Geist", "Inter", system-ui, sans-serif;
   --mono: "Geist Mono", ui-monospace, monospace;
@@ -51,6 +114,19 @@
   --fs-sm: 13px;
   --fs-xs: 12px;
   --fs-micro: 11px;
+  /* The headline statistic. Deliberately larger and tighter than --fs-kpi:
+     this is an analytics product, and its biggest numbers should read as
+     measured rather than as decorative headings. */
+  --fs-display: 52px;
+
+  /* Weight and tracking as tokens, so hierarchy is expressed by type rather
+     than by wrapping everything in another bordered box. */
+  --fw-regular: 400;
+  --fw-medium: 500;
+  --fw-semibold: 600;
+  --tracking-tight: -0.02em; /* display numerals */
+  --tracking-normal: -0.005em;
+  --tracking-label: 0.08em; /* mono eyebrows and column headers */
 }
 
 * {
@@ -85,11 +161,48 @@ a {
   color: #fff;
 }
 
-/* Focus is never removed -- only restyled. */
+/* ---------- Focus ----------
+   Never removed, only restyled -- but the previous single rule applied one
+   3px-radius rectangle to everything, so an 8px-radius card got a focus ring
+   that cut across its own corners, and a row inside a scrolling table got one
+   clipped by the scroll container.
+
+   The base is unchanged in strength (2px, --info, offset). What is added is
+   shape: the ring inherits the radius of what it surrounds. Keyboard focus
+   should look designed rather than defaulted, because for a keyboard user it
+   is the interface. */
 :focus-visible {
   outline: 2px solid var(--info);
   outline-offset: 2px;
   border-radius: 3px;
+}
+
+/* Concentric with the element it rings. */
+.card:focus-visible,
+.gallery__card:focus-visible,
+.car-card:focus-visible,
+.chip:focus-visible,
+.stat:focus-visible,
+.record:focus-visible,
+.palette__item:focus-visible,
+.search-row:focus-visible,
+.btn:focus-visible {
+  border-radius: var(--radius-focus);
+}
+
+/* Rows sit flush in a grid: an offset ring would be clipped by the row above,
+   so it is drawn inside the row instead of around it. */
+.rows__row:focus-visible,
+.standings__row:focus-visible {
+  outline-offset: -2px;
+  border-radius: var(--radius-sm);
+}
+
+/* The rail is 56px of icon buttons with no gap between them; a 2px offset
+   ring on one touches its neighbours. Inset, and shaped to the icon well. */
+.rail__item:focus-visible {
+  outline-offset: -3px;
+  border-radius: var(--radius-sm);
 }
 
 @media (prefers-reduced-motion: reduce) {

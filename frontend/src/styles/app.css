@@ -27,14 +27,14 @@
   position: absolute;
   top: -48px;
   left: 12px;
-  z-index: 100;
+  z-index: var(--z-skip);
   padding: 8px 14px;
   background: var(--accent);
   color: #fff;
   font-size: var(--fs-sm);
   font-weight: 600;
   border-radius: 0 0 6px 6px;
-  transition: top 0.15s;
+  transition: top var(--t-base) var(--ease);
 }
 .skip-link:focus {
   top: 0;
@@ -112,19 +112,18 @@
 }
 
 /* ---------- Motion ----------
-   One easing curve and two durations for everything the pointer drives, so
-   hover states across the app feel like one system rather than a pile of
+   One easing curve and a duration ladder for everything the pointer drives,
+   so hover states across the app feel like one system rather than a pile of
    individually-tuned effects. Anything larger than a hover -- entrances,
    route changes, layout -- is a spring, and lives in components/motion.tsx.
 
+   The tokens themselves moved to tokens.css. They were declared here while
+   motion.tsx separately hardcoded 0.18 / 0.25 / 0.35, which meant the motion
+   system was defined in two files and matched in neither; there is now one
+   ladder (--t-micro/fast/base/slow) that both consume.
+
    Every rule here is inside the reduced-motion guard at the bottom of this
    file, which switches all of it off in one place. */
-
-:root {
-  --ease: cubic-bezier(0.22, 1, 0.36, 1);
-  --t-fast: 0.14s;
-  --t-base: 0.22s;
-}
 
 .card,
 .gallery__card,
@@ -153,12 +152,84 @@
 .car-card:hover {
   transform: translateY(-2px);
   border-color: var(--text-faint);
-  box-shadow: 0 8px 28px rgb(0 0 0 / 0.35);
+  box-shadow: var(--shadow-2);
 }
 .rows__row:hover,
 .search-row:hover,
 .standings__row:hover {
   transform: translateX(3px);
+}
+
+/* ---------- Press ----------
+   The app had exactly one `:active` rule. Hover told a pointer user an
+   element was interactive; nothing confirmed that their click had landed,
+   which on a slow request reads as an interface that ignored them -- and on
+   touch, where there is no hover at all, it meant the first feedback of any
+   kind was the page changing.
+
+   Press is deliberately the fastest tier in the ladder (--t-micro) and moves
+   against the hover: an element that lifted on hover settles back down under
+   the pointer, which is what a physical control does.
+
+   Movement stays sub-pixel-ish (1px / 0.4% scale) on purpose. Anything larger
+   on a grid of cards reads as the layout twitching. */
+.card:active,
+.gallery__card:active,
+.car-card:active,
+.chip:active,
+.stat:active,
+.record:active,
+.palette__item:active,
+.search-row:active {
+  transform: translateY(0) scale(0.996);
+  box-shadow: var(--shadow-1);
+  transition-duration: var(--t-micro);
+}
+
+.rows__row:active,
+.standings__row:active {
+  transform: translateX(1px);
+  transition-duration: var(--t-micro);
+}
+
+/* Buttons compress rather than move, so a button in a toolbar does not shove
+   its neighbours' apparent alignment. `.btn` already had its own press rule
+   -- the single one in the file -- and keeps it; these are the controls that
+   looked like buttons and did not behave like them. */
+.sort-btn:active,
+.bar__search:active,
+.rail__item:active {
+  transform: scale(0.97);
+  transition-duration: var(--t-micro);
+}
+
+/* Touch has no hover, so the press state is the ONLY feedback there. Made
+   slightly more pronounced, and hover lift suppressed so a tapped card does
+   not stick in its lifted state after the finger leaves (a real artefact on
+   iOS, where :hover persists until the next tap elsewhere). */
+@media (pointer: coarse) {
+  .card:hover,
+  .gallery__card:hover,
+  .car-card:hover {
+    transform: none;
+    box-shadow: none;
+  }
+  .card:active,
+  .gallery__card:active,
+  .car-card:active {
+    transform: scale(0.985);
+    background: var(--elevated);
+  }
+  .rows__row:hover,
+  .search-row:hover,
+  .standings__row:hover {
+    transform: none;
+  }
+  .rows__row:active,
+  .search-row:active,
+  .standings__row:active {
+    background: var(--elevated);
+  }
 }
 
 /* Links pick up their hover colour rather than snapping to it. */
@@ -216,7 +287,7 @@ a {
 .dock__tip {
   position: fixed;
   left: 62px;
-  z-index: 60;
+  z-index: var(--z-island);
   transform: translateY(-50%);
   padding: 4px 8px;
   background: var(--elevated);
@@ -225,7 +296,7 @@ a {
   font-size: 11px;
   white-space: nowrap;
   pointer-events: none;
-  box-shadow: 0 6px 20px rgb(0 0 0 / 0.45);
+  box-shadow: var(--shadow-3);
 }
 
 /* ---------- Dynamic island ---------- */
@@ -657,6 +728,25 @@ table.data th.num {
   color: var(--accent-text);
 }
 
+/* An unsorted-but-sortable column had no affordance whatsoever: identical to
+   a plain header until you clicked it and the table rearranged. The caret is
+   now always in the layout and merely invisible until the column is hovered,
+   focused or active -- so nothing shifts when it appears, and the column
+   advertises that it can be sorted before it is. */
+.sort-btn__caret {
+  opacity: 0;
+  transition: opacity var(--t-fast) ease;
+  font-size: 9px;
+  line-height: 1;
+}
+.sort-btn:hover .sort-btn__caret,
+.sort-btn:focus-visible .sort-btn__caret {
+  opacity: 0.55;
+}
+.sort-btn[data-active="true"] .sort-btn__caret {
+  opacity: 1;
+}
+
 /* ---------- Controls ---------- */
 
 .controls {
@@ -714,16 +804,18 @@ table.data th.num {
   border-radius: var(--radius-sm);
   cursor: pointer;
   min-height: 34px;
+  /* Was four hardcoded 0.16s declarations and an inlined easing curve -- the
+     one component in the app whose motion did not come from the ladder. */
   transition:
-    border-color 0.16s ease,
-    background 0.16s ease,
-    transform 0.16s cubic-bezier(0.22, 1, 0.36, 1),
-    box-shadow 0.16s ease;
+    border-color var(--t-fast) ease,
+    background var(--t-fast) ease,
+    transform var(--t-fast) var(--ease),
+    box-shadow var(--t-fast) ease;
 }
 .btn:hover:not(:disabled) {
   border-color: var(--text-faint);
   transform: translateY(-1px);
-  box-shadow: 0 4px 14px rgb(0 0 0 / 0.3);
+  box-shadow: var(--shadow-1);
 }
 .btn:active:not(:disabled) {
   transform: translateY(0) scale(0.97);
@@ -891,7 +983,7 @@ table.data th.num {
   justify-content: center;
   align-items: flex-start;
   padding-top: 12vh;
-  z-index: 50;
+  z-index: var(--z-modal);
 }
 .palette {
   width: min(560px, 92vw);
@@ -1800,16 +1892,35 @@ table.data th.num {
   gap: var(--s3);
   align-items: center;
 }
+/* Sticky, because these listings run to hundreds of rows and a column header
+   that scrolls away turns a dense numeric table into an unreadable one --
+   the reader is left counting columns to work out which figure is which.
+
+   `background` must stay opaque (not a translucent surface) or the rows
+   scroll visibly through it. */
 .rows__head {
+  position: sticky;
+  top: 0;
+  z-index: var(--z-sticky);
   padding: var(--s2) var(--s4);
   background: var(--bg);
   border-bottom: 1px solid var(--border);
   font-size: var(--fs-micro);
-  font-weight: 600;
-  letter-spacing: 0.06em;
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--tracking-label);
   text-transform: uppercase;
   color: var(--text-dim);
   white-space: nowrap;
+}
+/* A hairline that only appears once the header is actually pinned, so the
+   header reads as flush with the table until it starts overlapping rows. */
+.rows__head::after {
+  content: "";
+  position: absolute;
+  inset-inline: 0;
+  bottom: -1px;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--line-strong) 12%, var(--line-strong) 88%, transparent);
 }
 .rows__row {
   padding: 9px var(--s4);
@@ -2164,5 +2275,155 @@ table.data th.num {
      with a fixed cell width rather than shrinking to slivers. */
   .strip {
     grid-auto-columns: 22px;
+  }
+}
+
+/* ==========================================================================
+   Refinement pass
+   ========================================================================== */
+
+/* ---------- Large desktop ----------
+   `.main` was capped at 1600px but never centred, so past that width the
+   whole application sat against the icon rail with every pixel of slack
+   collected on the right. On a 2560px monitor that reads as a broken layout
+   rather than a wide one. */
+.main {
+  margin-inline: auto;
+  width: 100%;
+}
+
+/* Beyond the cap the gutters open up rather than the measure growing: long
+   prose at 1600px is already past a comfortable line length, so the extra
+   room goes to breathing space instead of characters per line. */
+@media (min-width: 1600px) {
+  .main {
+    padding-inline: var(--s8);
+  }
+}
+
+/* ---------- Surface depth ----------
+   A single flat --bg across a 100vh column is what makes an otherwise
+   precise interface read as a wireframe. This is one radial wash, fixed to
+   the viewport so it never scrolls or repeats, at an opacity that is
+   genuinely hard to point at directly -- the reader should notice that the
+   page has a top, not that there is a gradient on it.
+
+   `background-attachment: fixed` on a gradient rather than a real element:
+   no extra DOM, no paint on scroll, no compositing layer. */
+body {
+  background-image:
+    radial-gradient(1200px 620px at 18% -10%, rgb(225 6 0 / 0.05), transparent 60%),
+    radial-gradient(900px 520px at 92% 4%, rgb(0 144 255 / 0.035), transparent 62%);
+  background-attachment: fixed;
+  background-repeat: no-repeat;
+}
+
+/* ---------- Telemetry rule ----------
+   The motorsport cue, used once rather than everywhere: a measurement-tick
+   hairline that terminates section headers. It reads as a scale marking on
+   an instrument, which is the reference, and it costs one pseudo-element.
+
+   Applied only to `.page-header` -- the temptation with a motif like this is
+   to put it on every card, at which point it stops being a detail and
+   becomes wallpaper. */
+.page-header {
+  position: relative;
+}
+.page-header::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(var(--s3) * -1);
+  height: 3px;
+  background-image:
+    linear-gradient(90deg, var(--accent) 0 28px, transparent 28px),
+    repeating-linear-gradient(90deg, var(--line-strong) 0 1px, transparent 1px 7px);
+  background-position:
+    0 0,
+    32px 1px;
+  background-repeat: no-repeat, no-repeat;
+  background-size:
+    100% 2px,
+    120px 1px;
+  opacity: 0.9;
+  pointer-events: none;
+}
+
+/* ---------- Scroll affordance ----------
+   A table wider than its pane just stopped at the edge with nothing to say it
+   continued. This fades the right edge only while the region can still be
+   scrolled, so it disappears once the reader reaches the end -- an indicator
+   that lies about remaining content is worse than none. */
+.table-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+  overscroll-behavior-x: contain;
+}
+.table-scroll::-webkit-scrollbar {
+  height: 8px;
+}
+.table-scroll::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 99px;
+}
+.table-scroll::-webkit-scrollbar-thumb:hover {
+  background: var(--text-faint);
+}
+
+/* ---------- Numerals ----------
+   The headline figure in a stat block is the thing a reader came for. It now
+   gets its own tier: larger, tighter, and optically aligned by tabular
+   figures so a column of them lines up on the decimal. */
+.stat__value,
+.kpi__value {
+  letter-spacing: var(--tracking-tight);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+/* ---------- Mobile ---------- */
+@media (max-width: 720px) {
+  .main {
+    /* Was --s4 on all sides via the 1080 rule; the bottom needs more so the
+       footer does not sit flush against the viewport edge on a phone. */
+    padding: var(--s4) var(--s4) var(--s7);
+  }
+
+  /* Touch targets. The rail collapses to a horizontal strip on small
+     screens, where 40px is below the 44px floor for a primary control. */
+  .rail__item,
+  .dock__slot {
+    min-height: 44px;
+  }
+
+  /* Sticky headers are a liability in a horizontally scrolling table on a
+     phone: the header pins vertically while the body scrolls sideways, and
+     the two drift out of alignment on older iOS Safari. */
+  .rows__head {
+    position: static;
+  }
+  .rows__head::after {
+    display: none;
+  }
+
+  /* The telemetry rule is a desktop detail. At 375px it competes with the
+     page title for the same 40px of vertical space. */
+  .page-header::after {
+    display: none;
+  }
+}
+
+/* ---------- Reduced motion ----------
+   The global guard in tokens.css collapses durations, which handles
+   transitions and keyframes. These are the two things it cannot reach:
+   a scroll behaviour, and a decorative gradient that implies depth through
+   movement. Stated here rather than assumed. */
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  body {
+    background-attachment: scroll;
   }
 }

@@ -19,6 +19,25 @@ import type { CSSProperties, ReactNode } from "react";
 
 export const SPRING: Transition = { type: "spring", stiffness: 400, damping: 32, mass: 0.6 };
 
+/**
+ * The duration ladder, mirroring the `--t-*` tokens in tokens.css.
+ *
+ * These used to be five loose numbers scattered through the file (0.18, 0.25,
+ * 0.35 ...) while the CSS declared its own. One motion system described in two
+ * places, agreeing in neither: a card's hover and the page transition it sat
+ * on were tuned independently, which is the sort of mismatch nobody can name
+ * and everybody feels.
+ *
+ * EASE is the same cubic-bezier as `--ease`.
+ */
+export const EASE = [0.22, 1, 0.36, 1] as const;
+export const DURATION = {
+  micro: 0.1,
+  fast: 0.14,
+  base: 0.22,
+  slow: 0.36,
+} as const;
+
 /** Route-level fade + lift. Keyed on pathname so each page animates once. */
 export function PageTransition({ children }: { children: ReactNode }) {
   const { pathname } = useLocation();
@@ -29,8 +48,19 @@ export function PageTransition({ children }: { children: ReactNode }) {
         key={pathname}
         initial={still ? false : { opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
-        exit={still ? undefined : { opacity: 0, y: -4 }}
-        transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+        /* `mode="wait"` means the exit runs BEFORE the next page enters, so
+           the two durations add up into the delay between a click and the
+           new screen. Holding the outgoing page for the full base duration
+           made navigation measurably sluggish for no information gained --
+           nobody needs to watch a page they have already left. The exit is
+           the fast tier; the entrance keeps the base.
+
+           The override rides on the exit variant rather than the shared
+           `transition` prop: this version of motion has no `exit` key in
+           Transition, and passing one is a type error rather than a
+           silently-ignored option. */
+        exit={still ? undefined : { opacity: 0, y: -4, transition: { duration: DURATION.fast, ease: EASE } }}
+        transition={{ duration: DURATION.base, ease: EASE }}
       >
         {children}
       </motion.div>
@@ -62,7 +92,7 @@ export function Reveal({
       initial={{ opacity: 0, y: 12 }}
       whileInView={{ opacity: 1, y: 0 }}
       viewport={{ once: true, margin: "0px 0px -80px 0px" }}
-      transition={{ duration: 0.35, delay, ease: [0.22, 1, 0.36, 1] }}
+      transition={{ duration: DURATION.slow, delay, ease: EASE }}
     >
       {children}
     </motion.div>
@@ -103,5 +133,5 @@ export function Stagger({
 
 export const staggerItem = {
   hidden: { opacity: 0, y: 6 },
-  shown: { opacity: 1, y: 0, transition: { duration: 0.25, ease: [0.22, 1, 0.36, 1] as const } },
+  shown: { opacity: 1, y: 0, transition: { duration: DURATION.base, ease: EASE } },
 };
