@@ -91,6 +91,40 @@ grants after any restore** (see §4).
 python supabase/verify_migrations.py && python -m backend.etl.audit && python -m pytest backend/tests -q
 ```
 
+That sequence now also proves the rebuild is **deterministic**, not merely
+repeatable. `backend/tests/test_reproducibility.py` rebuilds the database from
+the committed CSVs into a throwaway file and compares it table by table,
+ordered by every column, against the one being served. It exists because a
+pipeline can run twice without erroring while assigning different surrogate
+ids each time — which would leave the database unrestorable in the only sense
+that matters, since `/drivers/65` would then point at a different driver after
+a rebuild. The build iterates over sets of names and Python randomises string
+hashing per process, so the risk was real rather than hypothetical. Verified:
+every table identical across two builds in two processes.
+
+### What is still NOT proven
+
+**No restore has ever been performed.** Everything above verifies a database
+*after* a restore; nothing here has exercised getting one back. PITR is
+unavailable on the current Supabase tier, so the recovery path is a manual
+`pg_dump` that has never been taken, followed by a re-import that has never
+been run against a fresh project.
+
+A backup that has never been restored is not proven recoverable, and no amount
+of documentation changes that. The drill, when someone runs it, is:
+
+1. Create a scratch Supabase project (free tier is sufficient).
+2. Apply all 24 migrations in order, then `python supabase/verify_migrations.py`.
+3. `SUPABASE_DB_URL=<scratch> python -m backend.etl.supabase_import`.
+4. Point `SUPABASE_URL` / `SUPABASE_ANON_KEY` at the scratch project and run
+   `python -m pytest backend/tests -q`. The parity suites compare it against
+   SQLite row for row; a clean run means the rebuilt project is equivalent to
+   the real one.
+5. Record the date and the result here, and delete the scratch project.
+
+Until step 5 has a date next to it, treat recovery as reasoned, not
+demonstrated.
+
 ---
 
 ## 3. Migrations
@@ -231,6 +265,7 @@ platform's.
 |---|---|---|
 | Re-run integrity audit | After any ingestion | `python -m backend.etl.audit` |
 | Cross-validate against Jolpica | After ingestion, needs network | `python -m backend.etl.crossvalidate` |
+| Prove the rebuild is deterministic | Runs inside the test suite | `python -m pytest backend/tests/test_reproducibility.py` |
 | Verify migration checksums | After any schema change | `python supabase/verify_migrations.py` |
 | Backend tests | Before every deploy | `python -m pytest backend/tests -q` |
 | Frontend tests | Before every deploy | `cd frontend && npm test` |
@@ -238,3 +273,18 @@ platform's.
 
 CI (`.github/workflows/ci.yml`) runs the build, both test suites, the data
 audit, the migration checksums and the production build on every push.
+
+### Standing advisory assessments
+
+`npm audit --omit=dev` reports findings; it does not assess them. These have
+been assessed and deliberately not acted on. Recorded here so the next monthly
+run does not re-open a settled question — and so that "still 2 moderate" is
+recognisable as the known state rather than read as new.
+
+| Advisory | Package | Assessment |
+|---|---|---|
+| [GHSA-337j-9hxr-rhxg](https://github.com/advisories/GHSA-337j-9hxr-rhxg) — arbitrary constructor injection via `deserializeErrors()` | `react-router` / `react-router-dom` 6.30.4 (2 moderate) | **Not reachable.** The vulnerable path runs during **SSR hydration**. This is a client-only SPA: `src/main.tsx` calls `createRoot`, never `hydrateRoot`; there is no SSR config, no `StaticRouter`, and no server render anywhere in the build. The advisory's fixed range begins above 7.17.0, so remediating means a **major** upgrade from react-router 6 to 7 — a breaking API change, taken to close a path this app does not execute. Re-assess if the app ever gains server rendering, or if a 6.x patch is published. |
+
+Re-check this table whenever `npm audit` output changes shape, and delete a row
+the moment its reasoning stops holding. A stale exemption is worse than no
+exemption, because it silences a real finding.

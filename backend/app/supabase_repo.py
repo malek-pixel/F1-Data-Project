@@ -245,6 +245,15 @@ def health() -> dict:
         _, total = query(resource, select="id", limit=1, exact_count=True)
         counts[name] = total or 0
 
+    # Track-map coverage. Present because the SQLite payload carries it and
+    # the frontend's `Health` type declares it non-optional: a store that
+    # answered /api/health without it would typecheck fine and render
+    # "undefined of 39 circuits" to a reader.
+    _, mapped = query(
+        "circuits", select="id", filters={"svg_asset": "not.is.null"},
+        limit=1, exact_count=True,
+    )
+
     years = [row["season"] for row in seasons]
     return {
         "status": "ok",
@@ -257,6 +266,7 @@ def health() -> dict:
         "drivers": counts["drivers"],
         "constructors": counts["constructors"],
         "circuits": counts["circuits"],
+        "circuits_with_map": mapped or 0,
         "live_data": False,
     }
 

@@ -88,6 +88,12 @@ def test_coverage_uses_only_the_documented_verification_vocabulary(report):
         # else entirely. Added when practice timing was ingested -- and this
         # test is what caught it being introduced as a loose string.
         audit._LIVE_TIMING,
+        # "Partly" levels. Added when crossvalidate grew pole and circuit
+        # checks: the headline fact of each table is corroborated, the rest of
+        # the table is not, and neither _VALIDATED nor _STRUCTURAL says that
+        # without overclaiming or underclaiming.
+        audit._IDENTITY_VALIDATED,
+        audit._P1_VALIDATED,
         "asset presence only",
         "no source ingested",
     }
@@ -427,3 +433,47 @@ def test_pit_stop_numbering_gaps_are_exactly_the_known_source_omissions():
         }, f"pit stop numbering gaps changed: {gaps}"
     finally:
         conn.close()
+
+
+def test_an_emptied_enrichment_table_fails_the_audit():
+    """Silent data loss must break the build, not render as "unavailable".
+
+    The enrichment CSVs are optional: `build.py` falls back to a working
+    results-only database when one is missing. That is the right behaviour for
+    a fresh clone and the wrong behaviour for a regression, because every other
+    check in the audit is a violation count and an empty table violates
+    nothing. Before the coverage floors existed, wiping six tables holding
+    785,000 rows left the audit reporting 0 failures.
+
+    This reproduces that wipe against a throwaway copy and asserts each floor
+    fires. It is the difference between "we have no qualifying data" and "we
+    lost our qualifying data" reaching a reader as the same screen.
+    """
+    import shutil
+    import sqlite3
+    import tempfile
+    from pathlib import Path
+
+    wiped = {
+        "qualifying_results": "qualifying_absent_from_race",
+        "lap_times": "lap_times_absent_from_race",
+        "pit_stops": "pit_stops_absent_from_race",
+        "sprint_results": "sprints_absent_from_season",
+        "practice_laps": "practice_absent_from_season",
+        "sessions": "sessions_absent_from_season",
+    }
+
+    with tempfile.TemporaryDirectory() as tmp:
+        copy = Path(tmp) / "wiped.db"
+        shutil.copy(DB_PATH, copy)
+        conn = sqlite3.connect(copy)
+        try:
+            for table in wiped:
+                conn.execute(f"DELETE FROM {table}")
+            conn.commit()
+            failed = {c.name for c in audit.audit(conn).failed}
+        finally:
+            conn.close()
+
+    missing = set(wiped.values()) - failed
+    assert not missing, f"emptied tables the audit did not notice: {sorted(missing)}"

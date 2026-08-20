@@ -7,8 +7,33 @@ Every other check in this project proves the database faithfully matches
 recorded the wrong winner for a race, all 156 tests would still pass.
 
 This module closes that gap for the facts that matter most and are cheapest to
-verify: for every race, the **winner**, the **winning constructor**, the
-**date** and the **race name**.
+verify. For every race: the **winner**, the **winning constructor**, the
+**date** and the **race name**. Then two datasets the integrity audit can only
+check structurally, because nothing local can prove them right:
+
+  * **Qualifying P1** -- the pole-sitter of every round, compared driver by
+    driver. The audit can prove no race has two qualifying P1s; it cannot
+    prove the one it has is the right driver.
+
+  * **Circuit identity** -- checked as a BIJECTION over the whole dataset
+    rather than by name, because names legitimately differ between sources
+    ("Albert Park Circuit" vs "Albert Park Grand Prix Circuit", "Autodromo
+    Nazionale Monza" vs "Autodromo Nazionale di Monza") without being a
+    disagreement about which corner of the world the race was held at. What
+    must hold is that each source circuit maps to exactly one local circuit
+    and back. That is the failure mode `circuit_map.csv` can actually produce
+    -- two venues collapsed into one entry, or one venue split across two --
+    and it is invisible to a name comparison.
+
+WHAT THIS DOES AND DOES NOT PROVE
+---------------------------------
+Jolpica is independent of this project's PIPELINE, not of this project's
+PROVIDER: the enrichment extracts were fetched from Jolpica in the first
+place. So a green run proves that fetching, folding, joining, mapping and
+storing did not corrupt anything between the source and the database. It does
+not independently confirm Formula 1's own record. That is a real limit and is
+stated rather than glossed, because "cross-validated" reads stronger than what
+is actually being measured.
 
 SOURCE
 ------
@@ -23,8 +48,9 @@ conflicts are investigated and documented rather than silently resolved.
 
 COST
 ----
-One request per season (26 total), not one per race. `/f1/{year}/results/1`
-returns every round's winner for that season in a single response.
+Three requests per season (78 total), not one per race. `/f1/{year}/results/1`,
+`/f1/{year}/qualifying/1` and `/f1/{year}/races` each return every round of a
+season in a single response.
 
 Responses are cached under `data/cache/` so re-runs are free and reproducible.
 Delete that directory to force a refetch.
@@ -74,6 +100,21 @@ class Discrepancy:
         )
 
 
+def say(line: str) -> None:
+    """print(), but never crashes on a name it cannot encode.
+
+    Discrepancy lines carry driver and circuit names verbatim, and a Windows
+    console running a legacy code page raises UnicodeEncodeError on the first
+    accented character -- turning "here is the disagreement I found" into a
+    traceback, losing the finding at the exact moment it matters.
+    """
+    try:
+        print(line)
+    except UnicodeEncodeError:
+        encoding = sys.stdout.encoding or "ascii"
+        print(line.encode(encoding, "replace").decode(encoding))
+
+
 def fold(name: str) -> str:
     """Normalise a name for comparison only -- never for storage.
 
@@ -118,6 +159,195 @@ def fetch_season_winners(season: int, refresh: bool = False) -> list[dict]:
     path.write_text(json.dumps(rows, indent=1, ensure_ascii=False), encoding="utf-8")
     time.sleep(PAUSE_SECONDS)
     return rows
+
+
+def _fetch_season(season: int, resource: str) -> list[dict]:
+    """One season of `resource` from the API. The network layer only.
+
+    Deliberately does NOT cache: each caller caches its own SHAPED rows, and
+    caching here as well would write two files per season holding the same
+    facts, one of which nothing reads. The request settings — timeout, pause,
+    User-Agent — live here so the three callers cannot drift apart on them.
+    """
+    response = requests.get(
+        f"{API}/{season}/{resource}.json",
+        params={"limit": 100},
+        timeout=TIMEOUT_SECONDS,
+        headers={"User-Agent": "f1-data-project/crossvalidate"},
+    )
+    response.raise_for_status()
+    races = response.json()["MRData"]["RaceTable"]["Races"]
+    time.sleep(PAUSE_SECONDS)
+    return races
+
+
+def fetch_season_poles(season: int, refresh: bool = False) -> list[dict]:
+    """Qualifying P1 for every round in `season`. Cached on disk.
+
+    Seasons before 2003 return partial data upstream, and rounds simply
+    missing from the response are not treated as a disagreement -- the local
+    dataset documents the same gap.
+    """
+    CACHE.mkdir(parents=True, exist_ok=True)
+    path = CACHE / f"jolpica_{season}_poles.json"
+    if path.exists() and not refresh:
+        return json.loads(path.read_text(encoding="utf-8"))
+
+    races = _fetch_season(season, "qualifying/1")
+    rows = [
+        {
+            "round": int(race["round"]),
+            "pole": f"{race['QualifyingResults'][0]['Driver']['givenName']} "
+                    f"{race['QualifyingResults'][0]['Driver']['familyName']}",
+        }
+        for race in races
+        if race.get("QualifyingResults")
+    ]
+    path.write_text(json.dumps(rows, indent=1, ensure_ascii=False), encoding="utf-8")
+    return rows
+
+
+def fetch_season_circuits(season: int, refresh: bool = False) -> list[dict]:
+    """The circuit each round of `season` was held at. Cached on disk."""
+    CACHE.mkdir(parents=True, exist_ok=True)
+    path = CACHE / f"jolpica_{season}_circuits.json"
+    if path.exists() and not refresh:
+        return json.loads(path.read_text(encoding="utf-8"))
+
+    races = _fetch_season(season, "races")
+    rows = [
+        {"round": int(race["round"]), "circuit_id": race["Circuit"]["circuitId"]}
+        for race in races
+        if race.get("Circuit")
+    ]
+    path.write_text(json.dumps(rows, indent=1, ensure_ascii=False), encoding="utf-8")
+    return rows
+
+
+def local_poles(conn, season: int) -> dict[int, str]:
+    rows = conn.execute(
+        """
+        SELECT ra.round, d.name AS pole
+        FROM qualifying_results q
+        JOIN races ra   ON ra.id = q.race_id
+        JOIN drivers d  ON d.id  = q.driver_id
+        WHERE ra.season = ? AND q.position = 1
+        ORDER BY ra.round
+        """,
+        [season],
+    ).fetchall()
+    return {row["round"]: row["pole"] for row in rows}
+
+
+def local_circuits(conn, season: int) -> dict[int, str]:
+    rows = conn.execute(
+        """
+        SELECT ra.round, ci.slug
+        FROM races ra
+        JOIN circuits ci ON ci.id = ra.circuit_id
+        WHERE ra.season = ?
+        ORDER BY ra.round
+        """,
+        [season],
+    ).fetchall()
+    return {row["round"]: row["slug"] for row in rows}
+
+
+def compare_poles(conn, season: int, refresh: bool = False) -> tuple[list[Discrepancy], int]:
+    """Pole-sitter agreement for one season. Returns (discrepancies, compared).
+
+    A round the SOURCE does not carry is skipped, not failed: qualifying is
+    genuinely partial upstream before 2003. A round the source carries and the
+    LOCAL dataset does not is a real gap and is reported, because that is data
+    the ingestion should have picked up.
+    """
+    remote = {row["round"]: row["pole"] for row in fetch_season_poles(season, refresh)}
+    local = local_poles(conn, season)
+
+    found: list[Discrepancy] = []
+    compared = 0
+    for round_, pole in sorted(remote.items()):
+        if round_ not in local:
+            found.append(Discrepancy(season, round_, "pole missing", "--", pole))
+            continue
+        compared += 1
+        if fold(local[round_]) != fold(pole):
+            found.append(Discrepancy(season, round_, "pole", local[round_], pole))
+    return found, compared
+
+
+def collect_circuit_pairs(conn, season: int, refresh: bool = False) -> tuple[list[Discrepancy], set]:
+    """(source circuit, local circuit) for every round. Returns (gaps, pairs).
+
+    The bijection is asserted across all seasons at once, so this only gathers
+    pairs -- a venue used in several seasons must produce the same pair every
+    time, and a set collapses that naturally.
+    """
+    remote = {row["round"]: row["circuit_id"] for row in fetch_season_circuits(season, refresh)}
+    local = local_circuits(conn, season)
+
+    found: list[Discrepancy] = []
+    pairs: set = set()
+    for round_, circuit_id in sorted(remote.items()):
+        if round_ not in local:
+            found.append(Discrepancy(season, round_, "circuit missing", "--", circuit_id))
+            continue
+        pairs.add((circuit_id, local[round_]))
+    return found, pairs
+
+
+# Splits where the LOCAL dataset is deliberately finer than the source.
+#
+# Jolpica identifies a circuit by venue. This project identifies it by
+# CONFIGURATION, because a lap of one is not a lap of the other -- different
+# length, different corner count, different lap record. Where the two models
+# disagree and the local one is the more precise, the split is recorded here
+# rather than flattened to make a check pass.
+#
+# Removing an entry must mean the split itself was wrong, never that the check
+# was inconvenient.
+KNOWN_CONFIGURATION_SPLITS: dict[str, set[str]] = {
+    # The 2020 Sakhir Grand Prix ran on the Bahrain Outer Circuit: 3.543 km
+    # against the full track's 5.412 km, and the shortest lap in modern F1.
+    # Jolpica files both under circuitId 'bahrain'. Merging them here would
+    # put both races on one circuit page and let a "record at this circuit"
+    # compare lap times set on two different tracks.
+    "bahrain": {"bahrain", "bahrain-outer"},
+}
+
+
+def circuit_bijection_failures(pairs: set) -> list[str]:
+    """Every source circuit maps to one local circuit, and every local to one
+    source circuit.
+
+    Both directions matter and they fail differently. One source circuit
+    reaching two local circuits means a venue was split -- its records are now
+    divided across two profile pages. Two source circuits reaching one local
+    circuit means distinct venues were merged, and a driver's "record at this
+    circuit" silently spans both. `circuit_map.csv` is hand-written, so both
+    are live possibilities every time a season is added.
+    """
+    forward: dict[str, set] = {}
+    backward: dict[str, set] = {}
+    for source, local in pairs:
+        forward.setdefault(source, set()).add(local)
+        backward.setdefault(local, set()).add(source)
+
+    problems = []
+    for source, locals_ in sorted(forward.items()):
+        if len(locals_) > 1 and KNOWN_CONFIGURATION_SPLITS.get(source) == locals_:
+            continue
+        if len(locals_) > 1:
+            problems.append(
+                f"  source circuit {source!r} is split across local circuits "
+                f"{sorted(locals_)}"
+            )
+    for local, sources in sorted(backward.items()):
+        if len(sources) > 1:
+            problems.append(
+                f"  local circuit {local!r} merges source circuits {sorted(sources)}"
+            )
+    return problems
 
 
 def local_winners(conn, season: int) -> dict[int, dict]:
@@ -182,7 +412,7 @@ def main() -> int:
     args = parser.parse_args()
 
     if not DB_PATH.exists():
-        print(f"Database not found at {DB_PATH}. Run: python -m backend.etl.build")
+        say(f"Database not found at {DB_PATH}. Run: python -m backend.etl.build")
         return 1
 
     conn = connect()
@@ -194,27 +424,46 @@ def main() -> int:
 
         all_found: list[Discrepancy] = []
         compared = 0
+        poles_compared = 0
+        circuit_pairs: set = set()
 
         for season in seasons:
             found, n = compare_season(conn, season, args.refresh)
+            pole_found, pole_n = compare_poles(conn, season, args.refresh)
+            circuit_found, pairs = collect_circuit_pairs(conn, season, args.refresh)
+
             compared += n
-            all_found.extend(found)
-            flag = "FAIL" if found else "ok  "
-            print(f"{flag}  {season}  {n:>2} races  {len(found)} discrepancies")
+            poles_compared += pole_n
+            circuit_pairs |= pairs
+            season_found = found + pole_found + circuit_found
+            all_found.extend(season_found)
+
+            flag = "FAIL" if season_found else "ok  "
+            say(f"{flag}  {season}  {n:>2} races  {pole_n:>2} poles  "
+                f"{len(season_found)} discrepancies")
     finally:
         conn.close()
 
-    print()
-    print(f"{compared} races cross-validated against Jolpica-F1 "
-          f"(winner, constructor, date, race name).")
+    # Asserted over the whole dataset, not per season: a venue is only split or
+    # merged relative to the other seasons that used it.
+    bijection = circuit_bijection_failures(circuit_pairs)
 
-    if all_found:
-        print(f"\n{len(all_found)} DISCREPANCIES -- investigate, do not auto-apply:\n")
+    say("")
+    say(f"{compared} races cross-validated against Jolpica-F1 "
+        f"(winner, constructor, date, race name).")
+    say(f"{poles_compared} qualifying P1s cross-validated.")
+    say(f"{len(circuit_pairs)} circuit assignments checked for a 1:1 mapping.")
+
+    if all_found or bijection:
+        say(f"\n{len(all_found) + len(bijection)} DISCREPANCIES -- "
+            f"investigate, do not auto-apply:\n")
         for d in all_found:
-            print(d)
+            say(str(d))
+        for problem in bijection:
+            say(problem)
         return 1
 
-    print("0 discrepancies.")
+    say("0 discrepancies.")
     return 0
 
 

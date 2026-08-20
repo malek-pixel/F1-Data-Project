@@ -612,3 +612,59 @@ def test_driver_standings_are_untouched_by_constructor_penalties(client):
     assert drivers[0]["name"].endswith("Räikkönen")
     assert drivers[0]["points"] == pytest.approx(110.0)
     assert [d["points"] for d in drivers[1:3]] == [pytest.approx(109.0), pytest.approx(109.0)]
+
+
+def test_health_fails_when_the_active_store_is_down(monkeypatch):
+    """A health check that cannot fail is not a health check.
+
+    This endpoint used to read SQLite unconditionally, so under
+    F1_BACKEND=supabase with Supabase unreachable it answered 200 "ok" while
+    every real route answered 503. docs/OPERATIONS.md § 6 names an uptime
+    check on /api/health as the first monitoring to add, which would have made
+    that discrepancy the difference between an outage and a silent one.
+
+    The client must still see only the safe message -- no host, no driver
+    error, no stack.
+    """
+    from backend.app import backends, supabase_repo
+
+    monkeypatch.setenv("F1_BACKEND", "supabase")
+    monkeypatch.setattr(supabase_repo, "configured", lambda: True)
+
+    def unreachable(*_args, **_kwargs):
+        raise supabase_repo.SupabaseError("connection refused")
+
+    monkeypatch.setattr(supabase_repo, "query", unreachable)
+    supabase_repo.clear_cache()
+
+    assert backends.selected() == "supabase"
+    with TestClient(app, raise_server_exceptions=False) as client:
+        response = client.get("/api/health")
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": "Data store unavailable. Retry shortly."}
+
+
+def test_health_reports_the_same_coverage_from_whichever_store_answers(client):
+    """The payload shape must not depend on the backend.
+
+    `Health` in frontend/src/types.ts declares every field non-optional,
+    including `circuits_with_map`. A store that omitted one would typecheck
+    and then render "undefined of 39 circuits" to a reader.
+    """
+    from backend.app import supabase_repo
+
+    if not supabase_repo.configured():
+        pytest.skip("SUPABASE_URL / SUPABASE_ANON_KEY unset -- parity unproven")
+
+    local = client.get("/api/health").json()
+    remote = supabase_repo.health()
+    shared = (
+        "season_from", "season_to", "seasons", "races", "results",
+        "drivers", "constructors", "circuits", "circuits_with_map", "live_data",
+    )
+    for field in shared:
+        assert field in remote, f"supabase health omits {field}"
+        assert remote[field] == local[field], (
+            f"{field}: supabase {remote[field]} vs sqlite {local[field]}"
+        )

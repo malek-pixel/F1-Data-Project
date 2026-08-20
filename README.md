@@ -28,17 +28,32 @@ number.
 
 ## What it deliberately does not do
 
-The source is seven columns. These are absent and are **never** estimated:
+These are absent from every source this project ingests, and are **never**
+estimated, inferred, or filled with a plausible number:
 
-> qualifying · grid position · pole positions · fastest laps · finishing status
-> (DNF/DNS/DSQ) · championship points · points-per-race · championship standings
-> · lap times · sector times · pit stops · tyre compounds · telemetry · sprint
-> results · car specifications
+> telemetry · car specifications · sector times outside practice · the official
+> **pole position** award · the official **fastest lap** award
+
+The last two are subtler than "no data": qualifying P1 is ingested and counted,
+but it does not reproduce official pole tallies in the sprint era, so it is
+labelled `qualifying_p1` and never "poles". The quickest lap anyone drove is
+likewise available wherever lap timings are, but the *award* carries
+eligibility rules no source publishes, so the two are never presented as the
+same thing.
+
+This list is short because it used to be long. Points, championship standings,
+grid, qualifying, finishing status, lap times, pit stops and sprints were all
+absent when this project started and have since been ingested — see
+[§ Dataset](#dataset). The list above is maintained by hand and will go stale
+the same way, which is why the application does not rely on it:
+`/api/dataset/summary` reports availability by **counting rows**, and
+`backend/etl/audit.py` fails the build if a dataset that should be there is
+not.
 
 Two consequences worth stating up front:
 
 1. **`position` is classification order, not finishing status.** A driver who retired on lap 1 still carries a classification number, so the metric is *average classified position*, never "average finish". Retirements are identifiable via `status` / `classification`, and DNF rate is computed and reported alongside it.
-2. **Season tables rank by wins, not points.** They are not championship standings, and every screen that shows one says so.
+2. **Season *tables* rank by wins; season *standings* are the real championship.** They are two different things on purpose. The stat tables sort by wins and say so. `/seasons/{season}/standings` is race points plus sprint points, verified against the official result — champion and exact total — for all 26 seasons.
 
 The Car Library page ships as an honest empty shell: no car data exists in the
 source, so it documents the schema real data would populate instead of inventing
@@ -50,10 +65,18 @@ chassis or power figures.
 
 ```
 f1_fetch.py            one-off acquisition, the only script that uses the network
+backend/etl/jolpica.py     ↓
+backend/etl/practice.py    ↓  (also network; also one-off)
      ↓
-results.csv            committed to the repo; the single source of truth
+results.csv            committed; the spine — one row per classification
+data/jolpica_*.csv     committed; points, grid, status, qualifying, sprints,
+                       pit stops, lap timings, sessions, entity detail
+data/fastf1_*.csv      committed; practice laps, compounds, sectors
      ↓
-backend/etl/build.py   validate → normalise → load; aborts on any fatal finding
+backend/etl/build.py   validate → normalise → load; aborts on any fatal finding.
+                       The jolpica/fastf1 extracts are OPTIONAL inputs: a clone
+                       missing one still builds, which is why the audit asserts
+                       coverage floors rather than trusting their presence
      ↓
 data/f1.db             SQLite build artefact, gitignored, rebuilt in ~1s
      ↓
@@ -124,8 +147,8 @@ API calls and no network dependency — the pipeline reads one CSV in the repo.
 ## Tests
 
 ```bash
-python -m pytest backend/tests -q      # 109 passed, 24 skipped
-cd frontend && npm test                # 37 passed
+python -m pytest backend/tests -q      # 393 passed, 1 skipped (with Supabase credentials)
+cd frontend && npm test                # 59 passed
 cd frontend && npm run typecheck       # tsc --noEmit
 cd frontend && npm run build           # production bundle into frontend/dist
 ```
@@ -216,6 +239,37 @@ Spot-checked against known F1 history:
 | Most wins at one circuit | Lewis Hamilton, 9 (Silverstone) | ✓ |
 | 2021 top two | Verstappen 10, Hamilton 8 | ✓ |
 
+Spot checks are not verification, though, and are not relied on as such.
+`python -m backend.etl.crossvalidate` checks the dataset against Jolpica-F1
+race by race — three requests per season, cached on disk:
+
+| Checked | Scope | Result |
+|---|---|---|
+| Winner, winning constructor, date, race name | 503 races | 0 discrepancies |
+| Qualifying P1 | 459 poles (the source itself is partial before 2003) | 0 discrepancies |
+| Circuit identity | 39 circuits, as a 1:1 mapping | 0 discrepancies |
+
+Circuits are checked as a **bijection**, not by name, because names
+legitimately differ between sources ("Albert Park Circuit" vs "Albert Park
+Grand Prix Circuit") without being a disagreement about where the race was
+held. What must hold is that each source circuit maps to exactly one local
+circuit and back — which is the failure `circuit_map.csv` can actually
+produce, and is invisible to a name comparison. The check found the one real
+split on its first run: Jolpica files the 2020 Sakhir GP under the same
+circuit as the Bahrain GP, while this project separates the Outer Circuit
+(3.543 km) from the full track (5.412 km). The local split is the more precise
+model and is kept, recorded as a named exception rather than flattened.
+
+What this proves and does not: Jolpica is independent of this project's
+**pipeline**, not of its **provider**. A clean run means fetching, folding,
+joining, mapping and storing did not corrupt anything between source and
+database. It is not independent confirmation of Formula 1's own record.
+
+The build is also **deterministic**, not merely repeatable — two builds in two
+processes produce byte-identical table content, so surrogate ids and therefore
+every `/drivers/{id}` URL survive a rebuild. Enforced by
+`backend/tests/test_reproducibility.py`.
+
 ---
 
 ## Linkable state
@@ -266,10 +320,12 @@ previous page under a dozen back-button steps while the URL stays shareable.
 
 ## Roadmap
 
-Ordered by how much each unlocks:
+Items 1–3 of the original roadmap — qualifying and grid, finishing status, and
+points — have been **delivered**, and lap timings with them. What is left:
 
-1. **Qualifying + grid** → pole rate, grid-vs-finish delta, race-craft metrics
-2. **Finishing status** → DNF rate, finish rate, reliability — the single largest current gap
-3. **Points** → real championship standings, points-per-race
-4. **Car metadata** → the Car Library page is already built against its absence
-5. Lap times and telemetry — a different scale of data and out of scope until the above exist
+1. **Car metadata** → the Car Library page is already built against its absence, and stays an empty shell until a source exists
+2. **Telemetry** → a different scale of data, and out of scope
+3. **Observability** → the deployed app currently reports nothing when it breaks; see [docs/OPERATIONS.md](docs/OPERATIONS.md) § 6
+
+Anything added here needs a source first. Nothing on this list will be
+estimated to make a page look finished.

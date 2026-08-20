@@ -112,8 +112,26 @@ export function DriverDetail() {
               )}
               {/* Labelled QUALIFYING P1, never "poles". Counting fastest
                   qualifiers does not reproduce official pole tallies in the
-                  sprint era, and the label has to say what was measured. */}
-              {qualifying.data && qualifying.data.qualifying_p1 !== null ? (
+                  sprint era, and the label has to say what was measured.
+
+                  Three states, not two. This cell sits outside the `Async`
+                  that gates the rest of the page, because it is a separate
+                  request that resolves on its own schedule -- so "no data
+                  yet" and "no data at all" arrive here as the same `null`.
+                  Rendering the second while the first is true tells a reader
+                  a driver has no qualifying record when the request simply
+                  has not landed. Claiming an absence the data has not
+                  established is the failure this project keeps a whole test
+                  file about. */}
+              {qualifying.loading ? (
+                <Cell label="QUALIFYING P1" value="—" note="Loading…" />
+              ) : qualifying.error ? (
+                <Cell
+                  label="QUALIFYING P1"
+                  value="—"
+                  note="Could not be loaded. This is a failed request, not an absence of data."
+                />
+              ) : qualifying.data && qualifying.data.qualifying_p1 !== null ? (
                 <Cell
                   label="QUALIFYING P1"
                   value={num(qualifying.data.qualifying_p1)}

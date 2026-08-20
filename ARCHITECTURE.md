@@ -139,8 +139,46 @@ hand.
 
 ## Extending
 
-**Adding a season:** append to `results.csv`, check `circuit_map.csv` covers any
-new race name, rebuild. The build fails loudly if it does not.
+**Adding a season.** This used to read "append to `results.csv`, check
+`circuit_map.csv`, rebuild". That was the whole procedure when the database
+held seven columns. It no longer is: `results.csv` is the spine, but points,
+grid, status, qualifying, sprints, pit stops, lap timings and practice each
+come from their own committed extract, and a season added to the spine alone
+produces a database that is *structurally* valid and *materially* incomplete.
+
+Order matters — each step's output is the next step's input:
+
+| # | Step | Command |
+|---|---|---|
+| 1 | Extend the spine | append the season's classifications to `results.csv` |
+| 2 | Cover new race names | add any new venue to `backend/etl/circuit_map.csv` (the build **fails** on an unmapped name rather than dropping the race) |
+| 3 | Refetch Jolpica (network, 500 req/hour) | `python -m backend.etl.fetch_until_done` |
+| 4 | Rewrite the enrichment extracts | `build_enrichment`, `build_dimensions`, `build_sessions` |
+| 5 | Lap timings | `python -m backend.etl.laps_until_done` then `build_laps` |
+| 6 | Practice (FastF1, 2018+) | `python -m backend.etl.practice` then `build_practice` |
+| 7 | Rebuild | `python -m backend.etl.build --report` |
+| 8 | Prove it | `python -m backend.etl.audit` **and** `python -m backend.etl.crossvalidate` |
+| 9 | Push to Postgres | `python -m backend.etl.supabase_import`, then `pytest backend/tests -q` with credentials set |
+
+**Step 8 is the gate, and it is designed to fail on a half-added season.** The
+audit's coverage floors assert that every race from 2003 has qualifying, every
+race has lap timings, every race from 2012 has pit stops, and that every season
+carries the sprint, practice and timetable data its era should. Adding a season
+to `results.csv` and stopping there trips **all six** — verified by inserting a
+spine-only 2026 round into a copy of the database. That is the intended
+behaviour: before those floors existed, the
+same half-finished season passed the audit silently and the application
+rendered the missing datasets as "unavailable", which tells a reader the data
+does not exist rather than that it was not loaded.
+
+Two things the pipeline cannot check for you:
+
+* **`circuit_map.csv` encodes external knowledge, not source data.** A renamed
+  or relocated Grand Prix needs a human decision about circuit identity.
+* **`frontend/src/components/carPhoto.ts`** holds a hand-maintained list of
+  seasons per constructor. It is presentation only — a missing entry degrades
+  to a labelled fallback, never a wrong figure — but it will not pick up a new
+  season on its own.
 
 **Adding a metric:** define it in `analytics.py` with its docstring, add it to
 the schema, surface it. Update `METHODOLOGY.md` in the same change.

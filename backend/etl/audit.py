@@ -219,6 +219,67 @@ _CHECKS: list[tuple[str, str, int, str, str]] = [
      "SELECT COUNT(*) FROM (SELECT race_id FROM sprint_results WHERE position = 1"
      " GROUP BY race_id HAVING COUNT(*) > 1)", 0, FAIL,
      "no sprint has two winners"),
+
+    # ---- coverage floors ----
+    #
+    # Every check above is a violation count, and an empty table violates
+    # nothing: deleting all 552,138 lap times, 9,577 qualifying rows, 12,192
+    # pit stops, 480 sprints and 211,257 practice laps leaves this audit fully
+    # green. Verified by doing exactly that against a copy of the database.
+    #
+    # That matters because the enrichment CSVs are optional by design --
+    # `build.py` degrades to a working results-only database when one is
+    # absent, so a deleted or mis-pathed file produces no error anywhere. The
+    # application then renders "unavailable" for data it used to hold, which
+    # is the one failure mode this project treats as worse than a crash: a
+    # reader is told the information does not exist.
+    #
+    # These are structural, not thresholds. Each asserts the coverage the
+    # DATASET already documents, so a single dropped race trips it, and none
+    # needs revisiting when a season is added -- they are what SHOULD fail on
+    # a half-added season, and all six do.
+    #
+    # Two of them encode a forward assumption, which is worth naming rather
+    # than discovering: `sprints_absent_from_season` and
+    # `practice_absent_from_season` assume the sprint format and three
+    # practice sessions continue to exist. If the FIA drops either, a season
+    # that legitimately has none will fail here. The fix then is to close the
+    # window (`season BETWEEN 2021 AND <last sprint season>`), NOT to delete
+    # the check -- a rule change must not quietly become a licence to lose
+    # data for the seasons that did have it.
+    ("qualifying_absent_from_race",
+     "SELECT COUNT(*) FROM races ra WHERE ra.season >= 2003 AND NOT EXISTS"
+     " (SELECT 1 FROM qualifying_results q WHERE q.race_id = ra.id)", 0, FAIL,
+     "every race from 2003 has qualifying (2000-2002 is partial upstream)"),
+    ("lap_times_absent_from_race",
+     "SELECT COUNT(*) FROM races ra WHERE NOT EXISTS"
+     " (SELECT 1 FROM lap_times l WHERE l.race_id = ra.id)", 0, FAIL,
+     "every race has lap timings"),
+    # The 2021 Belgian GP is excluded because it is a fact, not a gap: the race
+    # was classified after two laps behind the safety car. The database holds
+    # it correctly -- 1 lap, half points, 12.5 to the winner -- and the source
+    # records no pit stop for it. Excluding it by name keeps this a hard gate
+    # rather than a warning that would be permanently noisy.
+    ("pit_stops_absent_from_race",
+     "SELECT COUNT(*) FROM races ra WHERE ra.season >= 2012"
+     " AND NOT (ra.season = 2021 AND ra.round = 12) AND NOT EXISTS"
+     " (SELECT 1 FROM pit_stops p WHERE p.race_id = ra.id)", 0, FAIL,
+     "every race from 2012 has pit stops (2021 Belgian GP ran to 2 laps)"),
+    ("sprints_absent_from_season",
+     "SELECT COUNT(*) FROM (SELECT season FROM races WHERE season >= 2021"
+     " GROUP BY season HAVING NOT EXISTS (SELECT 1 FROM sprint_results s"
+     " JOIN races r2 ON r2.id = s.race_id WHERE r2.season = races.season))",
+     0, FAIL, "every season from 2021 has at least one sprint"),
+    ("practice_absent_from_season",
+     "SELECT COUNT(*) FROM (SELECT season FROM races WHERE season >= 2018"
+     " GROUP BY season HAVING NOT EXISTS (SELECT 1 FROM practice_laps p"
+     " JOIN races r2 ON r2.id = p.race_id WHERE r2.season = races.season))",
+     0, FAIL, "every season from 2018 has practice laps"),
+    ("sessions_absent_from_season",
+     "SELECT COUNT(*) FROM (SELECT season FROM races WHERE season >= 2006"
+     " GROUP BY season HAVING NOT EXISTS (SELECT 1 FROM sessions s"
+     " JOIN races r2 ON r2.id = s.race_id WHERE r2.season = races.season))",
+     0, FAIL, "every season from 2006 has a weekend timetable"),
 ]
 
 
@@ -291,6 +352,21 @@ _STRUCTURAL = "structural (not cross-validated)"
 # internal consistency -- the three sectors must reconstruct the lap.
 _LIVE_TIMING = "FastF1 / F1 live timing (not cross-validated)"
 
+# A fourth level, because the honest answer for two datasets is "partly".
+#
+# `crossvalidate` now checks the pole-sitter of every round and the circuit
+# each round was held at. Those are the headline facts, and they are genuinely
+# corroborated against an independent materialisation. They are not the whole
+# table: 459 qualifying P1s were checked, not all 9,577 qualifying rows, and
+# circuit IDENTITY was checked, not circuit latitude or name.
+#
+# Promoting either to _VALIDATED would claim more than was measured, which is
+# the failure this vocabulary exists to prevent. Leaving them at _STRUCTURAL
+# would claim less, which quietly wastes a real check and invites someone to
+# redo it. Hence a level that says exactly which part was checked.
+_IDENTITY_VALIDATED = "identity cross-validated vs Jolpica-F1; detail structural"
+_P1_VALIDATED = "P1 cross-validated vs Jolpica-F1; rest structural"
+
 
 def _practice_coverage(conn: sqlite3.Connection) -> str:
     """Practice coverage as a fraction of sessions, not a season span.
@@ -346,7 +422,7 @@ def coverage_matrix(conn: sqlite3.Connection) -> list[dict]:
         ("race_results", "SELECT COUNT(*) FROM results", span, _VALIDATED),
         ("drivers", "SELECT COUNT(*) FROM drivers", span, _VALIDATED),
         ("constructors", "SELECT COUNT(*) FROM constructors", span, _VALIDATED),
-        ("circuits", "SELECT COUNT(*) FROM circuits", span, _STRUCTURAL),
+        ("circuits", "SELECT COUNT(*) FROM circuits", span, _IDENTITY_VALIDATED),
         ("finishing_status",
          "SELECT COUNT(*) FROM results WHERE classification IS NOT NULL", span, _VALIDATED),
         ("championship_points",
@@ -361,7 +437,7 @@ def coverage_matrix(conn: sqlite3.Connection) -> list[dict]:
         # Partial before 2003 and complete after. Reporting a single span
         # would overstate the early seasons, so the gap is named instead.
         ("qualifying", "SELECT COUNT(*) FROM qualifying_results",
-         "2003-" + str(hi) + " complete; 2000-2002 partial (6-24%)", _STRUCTURAL),
+         "2003-" + str(hi) + " complete; 2000-2002 partial (6-24%)", _P1_VALIDATED),
         ("driver_detail",
          "SELECT COUNT(*) FROM drivers WHERE nationality IS NOT NULL", span, _VALIDATED),
         # 2011 onward only -- the source has no pit stop data before then.

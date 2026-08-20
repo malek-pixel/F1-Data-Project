@@ -37,17 +37,31 @@ half was true:
     block. Migration 22 and the repo changes beside it closed those.
 
   * "Implemented" was measured by what `supabase_repo` can do, not by what
-    the API actually calls. Roughly two thirds of the routes never reach
-    `serve()` at all -- they read SQLite directly whatever F1_BACKEND says,
-    including /records, /insights, /seasons, /races, /circuits and the driver
-    sub-resources. `SUPABASE_CAPABILITIES` names implementations for several
-    of them, and `test_capability_set_is_not_aspirational` only checks that a
-    callable of that name exists in supabase_repo -- not that any route
-    dispatches to it.
+    the API actually calls. At the time that was written, roughly two thirds
+    of the routes never reached `serve()` at all -- they read SQLite directly
+    whatever F1_BACKEND said. `SUPABASE_CAPABILITIES` named implementations
+    for several of them, and `test_capability_set_is_not_aspirational` only
+    checked that a callable of that name existed in supabase_repo -- not that
+    any route dispatched to it.
 
-So the capability set below describes what supabase_repo CAN serve. It is not
-a list of what the running API does serve. Wiring the remaining routes through
-`serve()`, one at a time with a payload comparison each, is the work left.
+WHERE THAT WIRING ACTUALLY STANDS
+---------------------------------
+That work is done. **28 of the 30 `/api` routes dispatch through `serve()`.**
+The two that do not are deliberate and neither is a silent fallback:
+
+  * `/insights` has no Postgres implementation and calls `require("insights")`
+    explicitly, so it returns 501 under Supabase instead of quietly answering
+    from SQLite.
+  * `/analytics/metrics` reads no store at all -- it returns the metric
+    registry out of `advanced.py`.
+
+`test_api_payload_parity.py` compares 77 request paths across both stores,
+response for response, and `test_store_parity.py` compares the underlying rows
+including qualifying, sprints, pit stops, practice and all 552,138 lap times.
+
+The capability set below still describes what supabase_repo CAN serve rather
+than what dispatches to it, so keep verifying that claim with the parity suite
+rather than with this comment -- that is the mistake this docstring records.
 
 A fresh clone still has no `.env`, so SUPABASE_URL / SUPABASE_ANON_KEY are
 unset, `supabase_repo.configured()` is False, and asking for the Supabase

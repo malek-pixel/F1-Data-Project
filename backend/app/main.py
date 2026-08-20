@@ -111,14 +111,7 @@ async def capability_missing(request: Request, exc: Exception) -> JSONResponse:
     )
 
 
-@app.get("/api/health", tags=["meta"])
-def health():
-    """Liveness plus dataset coverage and entity counts.
-
-    The client renders every "129 drivers"-style figure from this payload
-    rather than hardcoding it in copy, so the text cannot go stale when the
-    dataset changes.
-    """
+def _health_sqlite() -> dict:
     conn = connect()
     try:
         row = conn.execute(
@@ -144,6 +137,29 @@ def health():
         "circuits": counts["circuits"],
         "circuits_with_map": mapped,
         "live_data": False,
+    }
+
+
+@app.get("/api/health", tags=["meta"])
+def health():
+    """Liveness plus dataset coverage and entity counts.
+
+    The client renders every "129 drivers"-style figure from this payload
+    rather than hardcoding it in copy, so the text cannot go stale when the
+    dataset changes.
+
+    Dispatched through `backends.serve` like every other route, and NOT
+    hardwired to SQLite. That distinction is the whole point of a health
+    check: this endpoint reads SQLite unconditionally, so with
+    F1_BACKEND=supabase and Supabase unreachable, every real route returned
+    503 while this one returned 200 "ok". An uptime check pointed here --
+    which is exactly what docs/OPERATIONS.md recommends as the first thing to
+    add -- would have reported the application healthy while it served
+    nothing. Now a store outage surfaces here as the same 503 a client gets.
+    """
+    payload = backends.serve("health", _health_sqlite, supabase_repo.health)
+    return {
+        **payload,
         # Which store actually answered, and what it can answer. Stated so a
         # reader never has to infer the backend from the numbers.
         **backends.describe(),
