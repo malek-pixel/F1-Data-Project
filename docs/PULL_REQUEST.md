@@ -1,127 +1,197 @@
-# Backend and data enrichment
+# Backend, data enrichment, and production readiness
 
-Adds seven datasets, brings the Postgres materialisation to parity with the
-SQLite one, and removes a class of bug where the application described data it
-already had as missing.
+This branch is the project. `main` holds only the original standalone analysis
+scripts; everything else — ETL, database, API, frontend, tests, docs, CI —
+arrives here. 712 files, 50 commits.
 
-## What this adds
+It ends with a full production-readiness audit, which is where the two most
+serious defects were found.
+
+---
+
+## 1. What the dataset contains
 
 | Dataset | Rows | Coverage | Source |
 |---|---|---|---|
+| Race classifications | 10,550 | 2000–2025, 503 races | Ergast lineage / Jolpica-F1 |
+| Lap timings | **552,138** | 2000–2025, **503/503 races** | Jolpica-F1 |
 | Practice laps | 211,257 | 2018–2025, 464 sessions | FastF1 |
 | Tyre compounds | 210,096 | 2018–2025 | FastF1 |
 | Sector times | 185,427 | 2018–2025 | FastF1 |
-| Lap timings | in progress | 2000–2025, per race | Jolpica-F1 |
-| Fastest-lap awards | 8,725 | 2004–2025 | Jolpica-F1 |
+| Pit stops | 12,192 | 2011–2025 | Jolpica-F1 |
+| Qualifying | 9,577 | 2003–2025 complete; 2000–02 partial | Jolpica-F1 |
+| Sprints | 480 | 2021–2025 | Jolpica-F1 |
 | Weekend timetable | 1,596 | 2006–2025 | Jolpica-F1 |
-| Constructor natural keys | 38 | — | Jolpica-F1 |
 
-Practice classifications, tyre compounds and sector times were previously
-reported as having no source. That was true of Jolpica, which publishes none of
-them, but not of every source — FastF1 reads Formula 1's live timing, which
-does. The two providers are kept in separate tables with separate verification
-levels, because blending them is how two sources start disagreeing with no way
-to tell which one is wrong.
+Practice timing, tyre compounds and sector times were previously reported as
+having no source. True of Jolpica, which publishes none of them; not true of
+every source — FastF1 reads Formula 1's live timing, which does. The two
+providers stay in separate tables with separate verification levels, because
+blending them is how two sources start disagreeing with no way to tell which
+one is wrong.
 
-## The identity bug
+Every source extract is committed as a CSV, so a fresh clone builds the whole
+database offline. Verified: three independent rebuilds produced a
+**byte-identical** database (`md5 5f45e8dc…`), lap and practice tables intact.
 
-`/drivers/7` referred to a different person in SQLite than in Postgres.
+---
 
-Integer primary keys were assigned by enumerating sorted names in one store and
-by a serial sequence in the other. The orderings are unrelated, so the two never
-matched. Nothing detected it because nothing had ever compared them. Even the
-text keys disagreed — `adrian-sutil` against `sutil`.
+## 2. The two defects that mattered
 
-Both stores now carry `slug`, taken from the upstream source's own id, which
-neither store invents. Routes resolve by slug or by legacy integer id, so
-existing links keep working. All 19 entity links in the UI were migrated.
+### The 2007 constructors' champion was wrong
 
-## Three parity suites, because each catches what the others cannot
+Constructor standings were derived by summing driver points. A championship
+penalty is applied by the FIA to the *championship*, not to the classifications
+it is summed from, and the source records only the results:
 
-| Suite | Question |
+| Season | Constructor | Summed | Official | |
+|---|---|---|---|---|
+| 2007 | McLaren | 218 | **0** | Excluded (FIA WMSC, 13 Sept 2007). **Ferrari won it with 204.** |
+| 2020 | Racing Point | 210 | **195** | −15 (brake ducts). Position unchanged. |
+
+Everything else reconciled exactly — all 26 driver champions, their exact
+points totals, and every other constructor total sampled across five seasons.
+
+The fix models **the deduction**, not a hand-entered final total: the total is
+still derived, then the FIA's penalty applied. A typed-in total could not be
+checked against anything. One table serves both backends. Wins and podiums are
+deliberately not adjusted — McLaren won eight races in 2007 and those races
+happened. Adjusted rows carry a `penalty` object through the API into the
+frontend types, so a changed number is never silent.
+
+### Eight endpoints returned bare 500s on a malformed URL
+
+An id wider than SQLite's signed 64-bit integer raised `OverflowError`, which
+is not `sqlite3.Error`, so the API's database handler never caught it. The
+request died as `500 Internal Server Error` with no `detail` body — the one
+shape the client cannot render, and one it offers to retry forever because it
+classifies 5xx as retryable. Reachable by typing a long number in the URL.
+
+Bounded at the lookup and on the path/query parameters that had a lower bound
+only, restoring an invariant `entities.py`'s own docstring already claimed.
+
+---
+
+## 3. Earlier in the branch
+
+**One identity across two stores.** `/drivers/7` referred to a different person
+in SQLite than in Postgres — integer keys were assigned by enumerating sorted
+names independently in each store. Entities now carry a source-derived `slug`
+that means the same thing everywhere; integer ids still resolve so existing
+links do not break.
+
+**Stale absence claims.** A recurring class of bug where the UI said data was
+missing that the database already held. Now caught by a test
+(`test_no_stale_absence_claims.py`) rather than by someone noticing.
+
+**Three parity suites**, because each catches what the others cannot: store
+parity (same rows), backend parity (same capability), payload parity (same
+JSON shape).
+
+---
+
+## 4. Production-readiness audit
+
+**Security.** Git history scanned — no credential ever committed. No secret in
+the production bundle. The browser never talks to Supabase directly; every
+request goes through the API, so no Supabase key of any kind reaches a client.
+CORS is allow-listed and `GET`-only.
+
+**RLS tested, not just read.** Probed live against all 21 tables as `anon`:
+`select` succeeds on public tables and is denied on `staging_results`;
+`insert`, `update` and `delete` all return `42501 permission denied`, confirmed
+with well-formed payloads against real columns. Enforced twice — no write
+policy *and* revoked grants.
+
+**Input.** Search fuzzed with SQL, XSS, Unicode, nulls, 5,000-character terms:
+no crash, no leaked error. Every dynamic SQL identifier is allow-listed; values
+are parameterised.
+
+**Frontend.** No horizontal overflow at 320/375/430/768/1920 — three grids used
+a bare `minmax(280px, 1fr)` and were fixed with the `min()` guard the codebase
+already documented. Zero missing alts, unnamed controls, unlabelled inputs,
+heading skips or positive tabindex across nine routes. 30 tab stops, all with a
+visible focus ring, no traps; the command palette is a proper combobox that
+restores focus on Escape. Contrast passes. Touch targets under 24px all clear
+the WCAG 2.2 spacing exception.
+
+**Failure states.** Offline, 503, malformed JSON and empty responses on
+never-visited routes: no blank screens, no stale data shown as current, retry
+present and recovery works. Two error messages were written for whoever deploys
+this rather than whoever reads it ("Is the backend running?") and were
+rewritten.
+
+**Performance.** No N+1. Charts are hand-rolled SVG, ≤244 nodes, ≤4 ms reflow.
+Heaviest page is `/cars` at 2,898 DOM nodes with 151/152 images lazy and every
+image dimensioned. Lists paginate.
+
+**Data.** 38 integrity checks, 0 failed, 2 documented upstream warnings. Zero
+future-dated races, malformed dates or season/date mismatches. NULL and zero
+stay distinct (`grid = 0` is a pit-lane start, not unknown). Units are now
+documented per column, including the warning that `pit_stops.duration` is text
+in two formats and must not be averaged.
+
+---
+
+## 5. CI
+
+Added, and it earned its place immediately: it failed on its first two runs and
+caught a defect nobody would have found locally.
+
+`CHECKSUMS.md5` recorded the **CRLF** hashes of migrations 22 and 23 while the
+repository stored LF. So `verify_migrations.py` passed on the single working
+copy the checksums were generated from and failed on **every fresh checkout** —
+every clone, every other machine, and CI. The check that exists to prove the
+schema has not drifted was itself the thing that had drifted. Confirmed the SQL
+was unchanged (content hash with CR stripped equals the checkout's hash), then
+regenerated and pinned `eol=lf`.
+
+CI runs the database build, both test suites, the data audit, the migration
+checksums and the production build on every push. No secret is used or wanted —
+the Supabase tests skip themselves without credentials, and adding a key would
+hand it to every fork's pull request.
+
+---
+
+## 6. Verification
+
+| Check | Result |
 |---|---|
-| `test_store_parity` | Do the two databases hold the same rows? |
-| `test_backend_parity` | Do the two implementations compute the same numbers? |
-| `test_api_payload_parity` | Does the HTTP response match, field for field? |
+| Backend tests | **381 passed** locally (244 in CI + 138 Supabase-gated skips) |
+| Frontend tests | **49 passed** |
+| Data integrity audit | **38 checks: 0 failed**, 2 warned |
+| Migration checksums | **24/24 match** |
+| Production build | Clean; 335 kB main chunk (108 kB gzip) |
+| Database reproducibility | Byte-identical across three rebuilds |
+| `pip-audit` / `npm audit` | Python clean; 2 unreachable react-router advisories |
 
-The first two passed while the API was still broken under `F1_BACKEND=supabase`
-— the views name things as the database does and the contract names them as the
-analytics layer does. Only comparing the responses caught it.
+---
 
-Row counts alone would have passed even if every result were attributed to the
-wrong driver, which is why the comparisons are on values, keyed on slug.
+## 7. Known limitations
 
-## Bugs found
+- **Coverage starts in 2000.** No figure here is an all-time F1 record.
+- **Images are third-party and their provenance is not recorded.** 266 car
+  photos, 129 driver portraits, 35 team logos, 25 circuit outlines. The repo
+  documents no source or licence for any of them. Every image has a graceful
+  labelled fallback, so they can be removed without breaking a layout.
+- **No monitoring, error reporting or alerting.** If the deployed app breaks,
+  nothing tells anyone. `docs/OPERATIONS.md` §6 lists the minimum worth adding.
+- **No down-migrations.** A destructive schema change needs a restore point
+  taken first; recovery procedure is in `docs/OPERATIONS.md` §2.
+- **The Supabase leg is verified locally only.** Its parity tests skip in CI by
+  design.
+- **`react-router` carries two moderate advisories.** Neither is reachable —
+  the open-redirect needs an attacker-controlled `to` and every navigation
+  target is a database-derived slug; the other is SSR-only and this is a client
+  SPA. Fixing requires a v6→v7 major upgrade.
+- **Not tested on Firefox or Safari**, and not tested with a real screen reader
+  — ARIA semantics were verified programmatically, which is not the same thing.
+- **`cars` and `engines` tables are deliberately empty.** No source ingested;
+  they report `unavailable`, never `0`.
 
-**Ten computed fields were being discarded.** Points, DNFs, average grid, places
-gained and six more were calculated on every request and dropped before
-serialisation, because the response models did not declare them. No error, no
-failing test — the ingested points data simply never reached any client.
+---
 
-**Migration checksums agreed with themselves.** Two files were saved with CRLF
-while the database recorded LF. The checksum file had been regenerated from
-those same files, so verification passed while the files did not match what
-Postgres actually ran. All 21 now verify against the database's own record.
+## 8. Not included
 
-**Six genuine errors in the qualifying data**, from the source: two drivers share
-P15 at Silverstone 2023, and there is no P20 in a 20-car session. Left exactly as
-published rather than renumbered, with a test pinning the set.
-
-**A Supabase failure that looked like a network fault.** Loading 103k rows failed
-with `SSL error: unexpected eof`. The real cause was a two-minute server
-`statement_timeout`; Postgres cancels the statement and drops the connection, so
-the client sees a broken socket. TCP keepalives were the obvious fix and changed
-nothing, because the socket was never idle — it was working.
-
-**A speedup that did not exist.** The lap fetcher read `JOLPICA_API_KEY` and,
-when set, paced requests at 10,000/hour. That number was invented. Jolpica's
-documentation says token authentication is "currently being implemented" and
-publishes no authenticated figure. Setting the variable would have paced the
-fetcher twenty times over the real limit. Removed.
-
-## Claims the application was making that were no longer true
-
-`analytics.py` — the file that calls itself the single source of truth — listed
-points, championship standings, grid, qualifying, DNFs, lap times and pit stops
-under "DELIBERATELY ABSENT". All of them existed. The same claim appeared in the
-OpenAPI description, in four endpoint docstrings, in the README, and in four
-places in the UI, including a panel telling users points and DNFs were
-unavailable while the API served them.
-
-Availability is now **counted from row counts** rather than listed, and a test
-fails the build if any file claims a dataset is missing that the database has.
-It found seven live claims on its first run.
-
-## Endpoint coverage
-
-Supabase went from 5 of 28 endpoints to 27. The remaining one, `insights`, is a
-narrative assembled in Python from aggregates that are themselves all available
-— only the phrasing is Python, and phrasing is not a metric.
-
-Seven endpoints were previously listed as unimplementable because a view would
-duplicate a metric definition. That was right about the danger and wrong about
-the remedy: the definitions were **moved** into the database rather than copied,
-and each was verified against the SQLite output before being switched over.
-
-## Verification
-
-```
-python -m pytest backend/tests -q       286 passed
-cd frontend && npx vitest run            49 passed
-python -m backend.etl.audit              38 checks, 0 failed
-python supabase/verify_migrations.py     21/21 byte-exact
-python -m backend.etl.crossvalidate      503 races, 0 discrepancies
-```
-
-## Still absent, and verified as such
-
-Car and engine specifications, and telemetry. The `cars` table wants
-`chassis_name` and `engine_manufacturer`; Jolpica supplies a constructor name
-and nationality, FastF1 supplies a team name and a colour. Neither has them, so
-the table stays empty rather than being filled from an unsourced guess.
-
-## Not included
-
-Pre-2000 seasons, deferred by decision. Lap-time ingestion is still running —
-the source caps at 500 requests/hour and the work is row-bound, so it is an
-overnight job with no query shape that avoids it.
+Telemetry, car specifications, and any live or in-progress race data. The
+dataset is static and every screen says so.

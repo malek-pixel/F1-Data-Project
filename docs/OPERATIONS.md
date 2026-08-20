@@ -178,9 +178,12 @@ history was scanned during the audit and contains no real credential.
    (simple, fast, read-only, no network dependency). `F1_BACKEND=supabase`
    needs the two Supabase variables. The API refuses to start on a
    misconfigured backend rather than failing later as an intermittent 503.
-4. **Image rights are not cleared.** 266 car photos, 129 driver portraits and
-   the team logos are third-party. This is a legal blocker for a public
-   deployment, not a technical one. See `docs/CAR_PHOTOS.md`.
+4. **Image provenance is unrecorded.** 266 car photos, 129 driver portraits,
+   35 team logos and 25 circuit outlines are third-party, and nothing in the
+   repository records where any of them came from. Noted so the position is
+   explicit rather than forgotten; every image has a graceful labelled
+   fallback, so removing them is a layout-safe change if that is ever wanted.
+   See `docs/CAR_PHOTOS.md`.
 
 ### Build
 
