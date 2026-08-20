@@ -176,7 +176,7 @@ export function CarLibrary() {
         </div>
       </div>
 
-      <Async state={state} loadingRows={8}>
+      <Async state={state} loadingRows={8} loadingVariant="cards">
         {(payload) => {
           const teams = payload.teams
             .filter((team) => team.constructor_name.toLowerCase().includes(debounced.trim().toLowerCase()))

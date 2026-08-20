@@ -40,5 +40,14 @@ export function seriesColour(name: string | null, order: string[]): string {
    --surface, below the 4.5:1 the app's own header claims. Pointing at the
    token means the correction applies here too, and cannot drift again. */
 export const AXIS = "var(--border)";
+/**
+ * Gridlines, deliberately lighter than the axis.
+ *
+ * Both were drawn with AXIS, so a horizontal gridline had exactly the weight
+ * of the baseline it sat above -- the plot read as a stack of equal rules with
+ * the data drawn over it, rather than as marks against a reference. Grid
+ * furniture must sit behind the data it measures.
+ */
+export const GRID = "var(--line)";
 export const TICK = "var(--text-faint)";
 export const LABEL = "var(--text-dim)";

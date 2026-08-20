@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useApi, useDebounced } from "../hooks/useApi";
 import { qs } from "../services/api";
+import { Skeleton } from "./States";
 import type { SearchHit } from "../types";
 
 /** Route for a search hit.
@@ -115,17 +116,35 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
           }}
         />
         <ul className="palette__results" id="palette-results" role="listbox" aria-label="Search results">
-          {loading && <li style={{ padding: 16, fontSize: 13, color: "var(--text-dim)" }}>Searching…</li>}
+          {/* Three message states, previously three sets of inline styles.
+              Moved to one class, per this stylesheet's own rule that markup
+              stays readable and every rule has one home. */}
+          {loading && (
+            <li className="palette__msg" aria-hidden="true">
+              {/* Rows rather than the word "Searching…": the result list is
+                  about to appear in this exact shape, so the placeholder
+                  reserves its height and the panel does not jump. */}
+              {[0, 1, 2].map((row) => (
+                <span key={row} className="palette__skeleton">
+                  <Skeleton height={11} width="14%" />
+                  <Skeleton height={13} width={`${44 + row * 11}%`} />
+                </span>
+              ))}
+            </li>
+          )}
+          {loading && (
+            <li className="sr-only" role="status" aria-live="polite">
+              Searching
+            </li>
+          )}
           {!loading && !query_ && (
-            <li style={{ padding: 16, fontSize: 13, color: "var(--text-dim)" }}>
+            <li className="palette__msg">
               Search drivers, constructors, circuits, races and seasons.{" "}
-              <span className="mono" style={{ color: "var(--text-faint)" }}>
-                Try “alonso”, “2004 monza”, “spa”.
-              </span>
+              <span className="mono palette__hint">Try “alonso”, “2004 monza”, “spa”.</span>
             </li>
           )}
           {!loading && query_ && results.length === 0 && (
-            <li style={{ padding: 16, fontSize: 13, color: "var(--text-dim)" }}>
+            <li className="palette__msg">
               No matches for “{debounced}”. Coverage starts in 2000 — earlier records are outside this dataset.
             </li>
           )}
@@ -137,7 +156,9 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
                 onMouseEnter={() => setActive(index)}
                 onClick={() => go(hit)}
               >
-                <span className="palette__kind">{hit.kind.toUpperCase()}</span>
+                <span className="palette__kind" data-kind={hit.kind}>
+                  {hit.kind.toUpperCase()}
+                </span>
                 <span>{hit.label}</span>
                 <span className="palette__sub">{hit.sublabel}</span>
               </button>
@@ -158,6 +179,23 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
             </li>
           )}
         </ul>
+
+        {/* The shortcuts the palette already supported and never advertised.
+            Decorative for a pointer user, a discovery aid for everyone else --
+            aria-hidden because the keys are announced by the input's own role
+            and repeating them would just be noise to a screen reader. */}
+        <div className="palette__legend mono" aria-hidden="true">
+          <span>
+            <kbd>↑</kbd>
+            <kbd>↓</kbd> navigate
+          </span>
+          <span>
+            <kbd>↵</kbd> open
+          </span>
+          <span>
+            <kbd>esc</kbd> close
+          </span>
+        </div>
       </div>
     </div>
   );

@@ -6,6 +6,7 @@ import {
   GitCompare,
   HardHat,
   LayoutDashboard,
+  MoreHorizontal,
   Route,
   Search,
   Trophy,
@@ -69,6 +70,9 @@ export const Icons = {
   // that would do nothing.
   search: (p: LucideProps) => <Search {...ICON} {...p} />,
   dataset: (p: LucideProps) => <Database {...ICON} {...p} />,
+  /* Mobile "More" affordance. Same family, same grid, same 1.75 stroke --
+     the whole point of this file. */
+  more: (p: LucideProps) => <MoreHorizontal {...ICON} {...p} />,
 };
 
 export type IconName = keyof typeof Icons;

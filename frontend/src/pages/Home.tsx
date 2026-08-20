@@ -3,6 +3,7 @@ import { Async } from "../components/States";
 import { formatDate, num } from "../components/format";
 import { Badge } from "../components/ui";
 import { seriesColour as colourFor } from "../charts/palette";
+import { Reveal } from "../components/motion";
 import { useApi } from "../hooks/useApi";
 import type { DatasetSummary, Health, Insight, RaceDetail, SeasonRounds, SeasonSummary } from "../types";
 
@@ -128,7 +129,7 @@ export function Home() {
         broken by wins, then podiums — the official countback rule is not applied.
       </p>
 
-      <Async state={season} loadingRows={8}>
+      <Async state={season} loadingRows={8} loadingVariant="table">
         {(summary) => {
           const drivers = summary.standings.drivers.slice(0, 8);
           const teams = summary.standings.constructors.slice(0, 8);
@@ -233,7 +234,12 @@ export function Home() {
         }}
       </Async>
 
-      <div className="panel panel--pad">
+      {/* Reveal is applied to whole sections below the fold only, and never
+          to the KPI strip or the standings above it -- content that is
+          on-screen at load must not fade in, and content a reader scrolls to
+          benefits from arriving. That distinction is the hierarchy: most of
+          this page stays static on purpose. */}
+      <Reveal className="panel panel--pad">
         <Async state={rounds} loadingRows={2}>
           {(payload) => {
             const tally = new Map<string, number>();
@@ -288,7 +294,7 @@ export function Home() {
             );
           }}
         </Async>
-      </div>
+      </Reveal>
 
       <div className="triptych">
         <div className="triptych__cell">
@@ -356,7 +362,7 @@ export function Home() {
         </div>
       </div>
 
-      <div className="panel panel--pad">
+      <Reveal className="panel panel--pad">
         <h2 className="pane__title" style={{ marginBottom: 8 }}>
           What this dataset cannot tell you
         </h2>
@@ -376,7 +382,7 @@ export function Home() {
             </>
           )}
         </Async>
-      </div>
+      </Reveal>
     </>
   );
 }

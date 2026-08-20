@@ -131,7 +131,7 @@ export function ConstructorDetail() {
             share is simply a different question from the results share shown here.
           </p>
 
-          <Async state={contribution} loadingRows={3}>
+          <Async state={contribution} loadingRows={3} loadingVariant="chart">
             {(rows) => (
               <div className="grid grid--2">
                 <DriverContributionChart rows={rows} metric={metric} />

@@ -73,7 +73,7 @@ export function DriverContributionChart({
     >
       <svg viewBox="0 0 760 56" preserveAspectRatio="none" style={{ height: 56 }}>
         {segments.map((segment) => (
-          <rect
+          <rect data-mark=""
             key={segment.row.driver_id}
             x={`${segment.offset}%`}
             y="8"

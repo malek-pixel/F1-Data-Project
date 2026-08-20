@@ -7,6 +7,16 @@ export class ApiError extends Error {
     readonly status: number,
     /** true when retrying could plausibly succeed (network blip, 5xx). */
     readonly retryable: boolean,
+    /**
+     * The server's request id for the failed call, when it sent one.
+     *
+     * The API attaches this to every handled failure (body `request_id`, and
+     * an `X-Request-ID` header on every response). Surfacing it in the error
+     * state is what makes the server-side access log usable in practice: a
+     * reader can quote eight characters instead of describing what they were
+     * doing and roughly when.
+     */
+    readonly requestId?: string,
   ) {
     super(message);
   }
@@ -41,13 +51,17 @@ async function request<T>(path: string, signal?: AbortSignal): Promise<T> {
       response.status >= 500
         ? "This data is temporarily unavailable. Please try again in a moment."
         : `That request could not be completed (${response.status}).`;
+    // Header first: it is present on every response, including the ones whose
+    // body is a plain-text proxy error page with no JSON to parse.
+    let requestId = response.headers.get("x-request-id") ?? undefined;
     try {
       const body = await response.json();
       if (typeof body?.detail === "string") detail = body.detail;
+      if (typeof body?.request_id === "string") requestId = body.request_id;
     } catch {
       /* keep the fallback */
     }
-    throw new ApiError(detail, response.status, response.status >= 500);
+    throw new ApiError(detail, response.status, response.status >= 500, requestId);
   }
   return response.json() as Promise<T>;
 }

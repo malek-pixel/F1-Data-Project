@@ -3,6 +3,7 @@ import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { CommandPalette, useCommandPalette } from "./CommandPalette";
 import { Dock, type DockItem } from "./Dock";
+import { MobileNav } from "./MobileNav";
 import { DynamicIsland, type IslandState } from "./DynamicIsland";
 import { PageTransition } from "./motion";
 import { Icons, type IconName } from "./icons";
@@ -193,6 +194,10 @@ export function Shell() {
           </main>
         </div>
       </div>
+
+      {/* Rendered always, hidden by CSS above 720px. Mounting it on a
+          JS breakpoint would flash the wrong navigation on first paint. */}
+      <MobileNav />
 
       <CommandPalette open={palette.open} onClose={() => palette.setOpen(false)} />
     </>

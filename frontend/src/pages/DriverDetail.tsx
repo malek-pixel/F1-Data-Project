@@ -7,6 +7,7 @@ import { Async } from "../components/States";
 import { driverPhoto } from "../components/driverPhoto";
 import { dec, num, pct, seasonSpan } from "../components/format";
 import { Cell, CellGrid, PaneHead, Panel, PendingCell, SectionTitle } from "../components/ui";
+import { Reveal } from "../components/motion";
 import { useApi } from "../hooks/useApi";
 import { useCoverage } from "../hooks/useDataset";
 import type { ConstructorSpell, DriverDetail as Detail, DriverQualifying, SeasonStats } from "../types";
@@ -173,14 +174,22 @@ export function DriverDetail() {
           </Panel>
 
           <SectionTitle aside={coverage}>Career charts</SectionTitle>
-          <Async state={seasons} loadingRows={5}>
-            {(rows) => (
-              <div className="grid grid--2">
-                <WinsBySeason data={rows} />
-                <AvgPositionBySeason data={rows} />
-              </div>
-            )}
-          </Async>
+          {/* The charts are the section a reader scrolls to. Wrapping the
+              grid, not each chart: two panels fading in side by side reads as
+              one section arriving, whereas staggering them draws attention to
+              the animation rather than to the comparison they exist to make.
+              The chart marks themselves are never animated -- see the note in
+              app.css under "Chart marks". */}
+          <Reveal>
+            <Async state={seasons} loadingRows={5} loadingVariant="chart">
+              {(rows) => (
+                <div className="grid grid--2">
+                  <WinsBySeason data={rows} />
+                  <AvgPositionBySeason data={rows} />
+                </div>
+              )}
+            </Async>
+          </Reveal>
 
           <Panel>
             <PaneHead title="Career log · season by season" meta="R · W · P · WIN RATE · AVG P · BEST" />

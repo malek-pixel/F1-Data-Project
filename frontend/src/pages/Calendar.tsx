@@ -268,7 +268,7 @@ export function SeasonDetail() {
               </CellGrid>
             </Panel>
 
-            <Async state={dominance} loadingRows={2}>
+            <Async state={dominance} loadingRows={4} loadingVariant="stats">
               {(dom) => (
                 <Panel>
                   <PaneHead title="Season concentration" meta="NORMALISED BY RACES HELD" />
@@ -539,6 +539,7 @@ export function RaceIndex() {
       <Async
         state={races}
         loadingRows={8}
+        loadingVariant="table"
         empty={{ title: "No races", body: "No races recorded for this selection." }}
       >
         {(rows) => {

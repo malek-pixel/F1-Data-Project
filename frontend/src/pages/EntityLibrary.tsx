@@ -126,7 +126,7 @@ export function EntityLibrary({
         </p>
       )}
 
-      <Async state={state} loadingRows={8}>
+      <Async state={state} loadingRows={8} loadingVariant="cards">
         {(page) => (
           <>
             <Panel>

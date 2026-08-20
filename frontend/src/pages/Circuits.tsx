@@ -172,6 +172,7 @@ export function CircuitLibrary() {
       <Async
         state={state}
         loadingRows={8}
+        loadingVariant="cards"
         empty={{ title: "No circuits found", body: `Nothing matches “${debounced}”. Try a country name.` }}
       >
         {(circuits) => (

@@ -1,7 +1,7 @@
 import type { SeasonStats } from "../types";
 import { dec } from "../components/format";
 import { AXIS, ChartFrame, TICK, labelEvery, ticks } from "./Chart";
-import { SERIES } from "./palette";
+import { GRID, SERIES } from "./palette";
 
 const W = 760;
 const H = 240;
@@ -75,7 +75,7 @@ export function WinsBySeason({ data, color = SERIES[0] }: { data: SeasonStats[];
           const y = PAD.top + PLOT_H - (tick / max) * PLOT_H;
           return (
             <g key={tick}>
-              <line x1={PAD.left} x2={W - PAD.right} y1={y} y2={y} stroke={AXIS} strokeWidth="1" />
+              <line x1={PAD.left} x2={W - PAD.right} y1={y} y2={y} stroke={GRID} strokeWidth="1" />
               <text x={PAD.left - 8} y={y + 4} textAnchor="end" fill={TICK} fontSize="10" fontFamily="var(--mono)">
                 {tick}
               </text>
@@ -94,6 +94,9 @@ export function WinsBySeason({ data, color = SERIES[0] }: { data: SeasonStats[];
                 height={Math.max(row.wins > 0 ? 2 : 0, height)}
                 fill={color}
                 rx="2"
+                /* Tagged so the shared mark styles in app.css bind to data
+                   marks only, never to background or axis furniture. */
+                data-mark=""
               >
                 <title>{`${row.season}: ${row.wins} wins from ${row.entries} entries`}</title>
               </rect>
@@ -161,7 +164,7 @@ export function AvgPositionBySeason({ data, color = SERIES[1] }: { data: SeasonS
           const y = PAD.top + ((tick - 1) / (max - 1)) * PLOT_H;
           return (
             <g key={tick}>
-              <line x1={PAD.left} x2={W - PAD.right} y1={y} y2={y} stroke={AXIS} strokeWidth="1" />
+              <line x1={PAD.left} x2={W - PAD.right} y1={y} y2={y} stroke={GRID} strokeWidth="1" />
               <text x={PAD.left - 8} y={y + 4} textAnchor="end" fill={TICK} fontSize="10" fontFamily="var(--mono)">
                 P{tick}
               </text>
@@ -183,7 +186,7 @@ export function AvgPositionBySeason({ data, color = SERIES[1] }: { data: SeasonS
               <circle cx={p.x} cy={p.y} r="12" fill="transparent">
                 <title>{`${row.season}: average P${dec(row.avg_classified_position)} from ${row.entries} entries`}</title>
               </circle>
-              <circle cx={p.x} cy={p.y} r="3" fill={color} />
+              <circle cx={p.x} cy={p.y} r="3" fill={color} data-mark="" />
               {index % every === 0 && (
                 <text x={p.x} y={H - 12} textAnchor="middle" fill={TICK} fontSize="10" fontFamily="var(--mono)">
                   {String(row.season).slice(2)}
