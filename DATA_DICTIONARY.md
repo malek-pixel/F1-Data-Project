@@ -122,6 +122,46 @@ power, weight, aero)
 
 ---
 
+## Units
+
+Every unit-bearing column, and the unit it is actually in. Determined from the
+stored values, not assumed from the column name. Nothing in this project
+converts between units: values are stored exactly as the source published them
+and are only ever formatted for display, so no figure here is the result of a
+silent conversion.
+
+| Table.column | Type | Unit | Verified by |
+|---|---|---|---|
+| `lap_times.time_ms` | INTEGER | **milliseconds** | `time_text` `1:40.366` stores as `100366` |
+| `lap_times.time_text` | TEXT | `M:SS.mmm` as published | — |
+| `practice_laps.lap_time` | REAL | **seconds** | range 54.064–163.162 |
+| `practice_laps.sector1/2/3` | REAL | **seconds** | same scale as `lap_time` |
+| `practice_laps.speed_trap` | REAL | **km/h** | range 32–362 |
+| `results.fastest_lap_speed` | REAL | **km/h** | range 89.54–257.32 |
+| `results.fastest_lap_time` | TEXT | `M:SS.mmm` as published | — |
+| `pit_stops.duration` | TEXT | **see the warning below** | — |
+| `circuits.latitude`/`longitude` | REAL | **decimal degrees**, WGS 84 | — |
+
+Note the deliberate asymmetry: lap timings are milliseconds in `lap_times` and
+seconds in `practice_laps`, because that is how each source publishes them.
+The two are never compared or combined anywhere in the codebase — `time_ms` is
+only ever ordered and minimised within `lap_times`, and `lap_time` only within
+`practice_laps`. **Do not introduce arithmetic across the two without an
+explicit conversion.**
+
+### `pit_stops.duration` is text in two different formats
+
+It holds both `12.804` (seconds) and `6:50.005` (`M:SS.mmm`), exactly as the
+source publishes it. Today nothing aggregates it — the API passes it through
+verbatim to be displayed — which is why the mixed format is harmless.
+
+It will not stay harmless if someone aggregates it. `AVG(duration)` in SQLite
+coerces `'6:50.005'` to `6`, so an average over this column silently mixes
+minutes with seconds and returns a number that looks plausible and is wrong.
+Parse it to a single unit first, or add a numeric column beside it.
+
+---
+
 ## Known issues
 
 | Issue | Handling |

@@ -16,11 +16,34 @@ export interface Stats {
   best_classified_position: number | null;
   /** false below the backend's minimum entry count; show the value, flag it. */
   rates_reliable: boolean;
+
+  /*
+   * Enrichment-derived (finishing status, points, grid). All nullable: a build
+   * without data/jolpica_results.csv has none of them, and null must read as
+   * "not known", never as zero.
+   */
+  /** Classified finishes. NOT the same as "saw the flag" -- a lapped car is classified. */
+  finishes: number | null;
+  dnfs: number | null;
+  /** Over rows that HAVE a finishing status, not over all entries. */
+  dnf_rate: number | null;
+  /** Championship points as awarded, halves included. */
+  points: number | null;
+  /** Excludes pit-lane starts (grid 0), which are real but not a grid slot. */
+  avg_grid: number | null;
+  /** Grid minus finish, classified finishes only. Positive = places gained. */
+  avg_positions_gained: number | null;
 }
 
 export interface NamedStats extends Stats {
   id: number;
+  /** The portable identifier. `id` is store-local -- it comes from a different
+   *  sequence in the Postgres materialisation, so the same number is a
+   *  different entity there. Link and compare with this, never with `id`. */
+  slug: string;
   name: string;
+  /** Carried on listings so a card can show it without a request per row. */
+  nationality: string | null;
 }
 
 export interface SeasonStats extends Stats {
@@ -29,11 +52,13 @@ export interface SeasonStats extends Stats {
 
 export interface ConstructorSpell extends SeasonStats {
   constructor_id: number;
+  constructor_slug: string;
   constructor_name: string;
 }
 
 export interface DriverContribution extends Stats {
   driver_id: number;
+  driver_slug: string;
   driver_name: string;
   entry_share: number | null;
   win_share: number | null;
@@ -70,8 +95,10 @@ export interface CircuitWinner {
   race_id: number;
   race_name: string;
   driver_id: number;
+  driver_slug: string;
   driver_name: string;
   constructor_id: number;
+  constructor_slug: string;
   constructor_name: string;
 }
 
@@ -86,17 +113,39 @@ export interface Race {
   circuit_slug: string;
   /** Null when the source carries no position-1 row for this race. */
   winner_driver_id: number | null;
+  /** Portable identifier. Link on this, not on the numeric id: ids are
+   *  assigned per data store, so the same number means a different driver
+   *  depending on which backend served the request. Null together with the
+   *  id -- both come from the same optional join. */
+  winner_driver_slug: string | null;
   winner_driver: string | null;
   winner_constructor_id: number | null;
+  winner_constructor_slug: string | null;
   winner_constructor: string | null;
+  winner_grid: number | null;
+  winner_status: string | null;
+  qualifying_first: string | null;
+  qualifying_first_slug: string | null;
 }
 
 export interface RaceResult {
   position: number;
   driver_id: number;
+  driver_slug: string;
   driver_name: string;
   constructor_id: number;
+  constructor_slug: string;
   constructor_name: string;
+  /** Null means not known for this row, never zero. `grid: 0` is a real
+   *  value -- a pit-lane start. */
+  grid: number | null;
+  laps: number | null;
+  points: number | null;
+  /** Raw source text ("Finished", "+1 Lap", "Gearbox"). Deliberately not
+   *  bucketed into an enum: the detail is the value. */
+  status: string | null;
+  classification: string | null;
+  position_text: string | null;
 }
 
 /** One round of a season with its winner. Winner fields are null when the
@@ -109,9 +158,18 @@ export interface SeasonRound {
   circuit_name: string;
   circuit_slug: string;
   winner_driver_id: number | null;
+  winner_driver_slug: string | null;
   winner_driver: string | null;
   winner_constructor_id: number | null;
+  winner_constructor_slug: string | null;
   winner_constructor: string | null;
+  /** The winner's own grid slot. 0 is real -- a pit-lane start. */
+  winner_grid: number | null;
+  winner_status: string | null;
+  /** Whoever qualified first. Deliberately not called "pole": qualifying P1
+   *  and the pole position differ in the sprint era. */
+  qualifying_first: string | null;
+  qualifying_first_slug: string | null;
 }
 
 export interface SeasonRounds {
@@ -119,33 +177,159 @@ export interface SeasonRounds {
   rounds: SeasonRound[];
 }
 
+/** Qualifying classification for one race. */
+export interface QualifyingResult {
+  position: number;
+  q1: string | null;
+  q2: string | null;
+  q3: string | null;
+  driver_id: number;
+  driver_name: string;
+  constructor_id: number;
+  constructor_name: string;
+  /** The grid actually started from -- differs after penalties. */
+  race_grid: number | null;
+}
+
+export interface SprintResult {
+  position: number;
+  classification: string | null;
+  status: string | null;
+  points: number | null;
+  grid: number | null;
+  laps: number | null;
+  driver_id: number;
+  driver_name: string;
+  constructor_id: number;
+  constructor_name: string;
+}
+
+export interface PitStop {
+  lap: number;
+  stop: number;
+  /** Raw source string, e.g. "22.213". Null where unrecorded -- never 0. */
+  duration: string | null;
+  time_of_day: string | null;
+  driver_id: number;
+  driver_name: string;
+}
+
+/**
+ * A session block that knows WHY it is empty.
+ *
+ * An empty array alone cannot distinguish "no qualifying was recorded for this
+ * race" from "nobody qualified", and only one of those is ever true.
+ */
+export interface SessionBlock<T> {
+  available: boolean;
+  unavailable_reason: string | null;
+  items: T[];
+}
+
 export interface RaceDetail extends Race {
   results: RaceResult[];
+  qualifying: SessionBlock<QualifyingResult>;
+  sprint: SessionBlock<SprintResult>;
+  pit_stops: SessionBlock<PitStop>;
+  fastest_lap: FastestLapSection;
+  fastest_lap_award: FastestLapAwardSection;
+  practice: PracticeBlock;
 }
 
 export interface DriverDetail {
   id: number;
+  /** Portable identifier -- see NamedStats.slug. Link with this, not `id`. */
+  slug: string;
   name: string;
+  /** Descriptors. Null means the source has no value for THIS driver -- the
+   *  columns themselves are populated (all 129 have a nationality; 62 have a
+   *  permanent number), so the UI renders per-driver, never a blanket
+   *  "not in the source". */
+  nationality: string | null;
+  permanent_number: number | null;
+  abbreviation: string | null;
+  date_of_birth: string | null;
   stats: Stats;
   constructors: ConstructorSpell[];
 }
 
+/** Career qualifying summary. `qualifying_p1` counts fastest-qualifier
+ *  classifications and is deliberately NOT called poles: the two differ, and
+ *  the field name says what was measured. */
+export interface DriverQualifying {
+  entries: number;
+  qualifying_p1: number | null;
+  avg_qualifying_position: number | null;
+  best_qualifying_position: number | null;
+  coverage_from: number | null;
+  coverage_note: string;
+  qualifying_p1_note: string;
+}
+
 export interface ConstructorDetail {
   id: number;
+  /** Portable identifier -- see NamedStats.slug. Link with this, not `id`. */
+  slug: string;
   name: string;
   stats: Stats;
   seasons: SeasonStats[];
+}
+
+/** One row of a championship table: points, from race + sprint results. */
+export interface StandingsRow {
+  position: number;
+  id: number;
+  /** Portable identifier -- link on this, not on `id`. */
+  slug: string;
+  name: string;
+  points: number | null;
+  wins: number;
+  podiums: number;
+  entries: number;
+  /**
+   * Present only when the FIA applied a championship penalty to this row.
+   * `points` above is already the adjusted total; this carries what was
+   * scored and why it was reduced, so a changed number is never silent.
+   * Two rows in the dataset have it: McLaren 2007 (excluded) and Racing
+   * Point 2020 (-15).
+   */
+  penalty?: {
+    points_scored: number;
+    points_deducted: number;
+    /** True for a full exclusion rather than a fixed deduction. */
+    excluded: boolean;
+    reason: string;
+    evidence: string;
+  };
+}
+
+export interface Standings {
+  drivers: StandingsRow[];
+  constructors: StandingsRow[];
+  /** "points". */
+  basis: string;
+  includes_sprint_points: boolean;
+  /** Tie-break caveat -- the official countback rule is not implemented. */
+  caveat: string;
 }
 
 export interface SeasonSummary {
   season: number;
   races: number;
   entries: number;
-  /** Always "wins". These are NOT championship standings -- no points column exists. */
+  /**
+   * Describes `drivers`/`constructors` below -- always "wins".
+   *
+   * It does NOT describe `standings`, which is the real championship. This
+   * field previously said no points column existed; that stopped being true
+   * when points were ingested.
+   */
   ranking_basis: string;
   drivers: NamedStats[];
   constructors: NamedStats[];
   races_list: Race[];
+  /** The actual championship: race + sprint points. */
+  standings: Standings;
 }
 
 export interface SeasonIndexRow {
@@ -194,8 +378,11 @@ export interface DatasetSummary {
 }
 
 export interface SearchHit {
-  kind: "driver" | "constructor" | "circuit" | "season";
+  kind: "driver" | "constructor" | "circuit" | "race" | "season";
   id: number;
+  /** Portable identifier for drivers, constructors and circuits.
+   *  Null for races and seasons, which are addressed by their own numbers. */
+  slug: string | null;
   label: string;
   sublabel: string;
 }
@@ -242,8 +429,10 @@ export interface Distribution {
 
 export interface TeammateSpell {
   teammate_id: number;
+  teammate_slug: string;
   teammate_name: string;
   constructor_id: number;
+  constructor_slug: string;
   constructor_name: string;
   seasons: number[];
   shared_races: number;
@@ -302,6 +491,35 @@ export interface SeasonRow {
   top_constructor_win_share: number;
 }
 
+/** One constructor-season: the car a team ran that year (see /cars). */
+export interface CarSeason {
+  season: number;
+  races: number;
+  entries: number;
+  wins: number;
+  podiums: number;
+  best_finish: number;
+  avg_classified_position: number;
+  drivers: string[];
+  era: "current" | "recent" | "retired";
+}
+
+export interface CarTeam {
+  constructor_id: number;
+  constructor_name: string;
+  seasons: number;
+  wins: number;
+  first_season: number;
+  last_season: number;
+  cars: CarSeason[];
+}
+
+export interface CarLibraryPayload {
+  teams: CarTeam[];
+  unit: string;
+  chassis_available: boolean;
+}
+
 export interface Era {
   decade: number;
   label: string;
@@ -311,4 +529,87 @@ export interface Era {
   constructors: number;
   largest_field: number;
   top_winners: { name: string; wins: number }[];
+}
+
+
+/** The quickest lap driven in a race, derived from the lap timings.
+ *
+ *  NOT the official fastest-lap award: no source publishes who received it,
+ *  and since 2019 it carries eligibility rules (a classified finish, and a
+ *  top-ten position for the point) that a raw minimum does not apply. The two
+ *  can disagree, so they are never labelled the same.
+ *
+ *  `available: false` means lap timings have not been ingested for that race
+ *  — the fetch is per race and resumable — never that nobody set a lap. */
+export interface FastestLap {
+  lap: number;
+  time_text: string;
+  time_ms: number;
+  driver_id: number;
+  driver_slug: string;
+  driver_name: string;
+}
+
+export interface FastestLapSection {
+  available: boolean;
+  unavailable_reason: string | null;
+  basis: string;
+  item: FastestLap | null;
+}
+
+
+/** One driver's practice-session result: their best lap that STOOD.
+ *
+ *  Derived, not published -- no source issues a practice classification.
+ *  Deleted laps are excluded from the ranking but kept in the data, because
+ *  which laps stood is what decides a session's fastest time.
+ *
+ *  `position` is null for a driver who ran but set no valid time. They were
+ *  on track; "unranked" and "slowest" are different statements. */
+export interface PracticeResult {
+  position: number | null;
+  driver_id: number;
+  driver_slug: string;
+  driver_name: string;
+  best_lap: number | null;
+  gap_to_leader: number | null;
+  laps: number;
+  deleted_laps: number;
+}
+
+/** Practice sessions for a race weekend.
+ *
+ *  A DIFFERENT SOURCE from everything else on the race payload: FastF1 reads
+ *  Formula 1 live timing, which is the only provider carrying practice laps,
+ *  tyre compounds and sector times. Coverage starts in 2018. */
+export interface PracticeBlock {
+  available: boolean;
+  unavailable_reason: string | null;
+  source: string;
+  sessions: Record<string, PracticeResult[]>;
+}
+
+/** The official fastest-lap AWARD, as published.
+ *
+ *  NOT the same as the derived quickest lap: the award applies eligibility
+ *  rules -- a classified finish, and since 2019 a top-ten position to score
+ *  the point -- so the two can name different drivers. */
+export interface FastestLapAward {
+  driver_id: number;
+  driver_slug: string;
+  driver_name: string;
+  constructor_id: number;
+  constructor_slug: string;
+  constructor_name: string;
+  lap: number | null;
+  time_text: string | null;
+  average_speed_kph: number | null;
+  finish_position: number;
+}
+
+export interface FastestLapAwardSection {
+  available: boolean;
+  unavailable_reason: string | null;
+  basis: string;
+  item: FastestLapAward | null;
 }

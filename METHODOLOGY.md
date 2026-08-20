@@ -61,25 +61,52 @@ What the design asks for, versus what seven columns can support.
 
 | Design element | What it actually is | Why |
 |---|---|---|
-| Season "standings" | **Wins-based ranking** (wins → podiums → avg position) | No points column, so real championship order cannot be reproduced. The API returns `ranking_basis: "wins"` and clients must label it. |
+| Season "standings" | **Both are returned.** `standings` is the real championship (points, race + sprint); `drivers[]`/`constructors[]` stay wins-ordered with `ranking_basis: "wins"` | The two answer different questions: a driver can lead on wins without winning the title. Clients must label the wins-ordered tables. |
 | "Average finishing position" | **Average classified position** | Retirements are ranked, not flagged |
 | Driver contribution to team | Share of **entries / wins / podiums** | The design asked for share of team points; points do not exist in the source |
 
 ### Unavailable — deliberately not implemented
 
 Not estimated, not inferred, not filled with placeholders. Endpoints expose
-these through `/api/dataset/summary` as an explicit unavailable list.
+these through `/api/dataset/summary`, which **measures** availability by
+probing the database rather than reading a list. Only two fields are left:
 
-- Qualifying results, grid position, pole positions
-- Fastest laps
-- Finishing status → **DNF rate, finish rate, reliability**
-- Championship points, points-per-race, championship standings
-- Lap times, sector times, lap-by-lap timing
-- Pit stops, tyre compounds, telemetry
-- Sprint results
-- Car specifications (chassis, engine, power, weight, aero)
+- Telemetry
+- Car specifications (chassis, engine, power, weight, aero) — the `cars` table
+  exists and is deliberately empty; no source this project ingests supplies it
 
-Adding any of these requires new source columns first.
+Adding either requires new source columns first.
+
+#### What this list used to say
+
+Everything below was on the unavailable list above, and every item of it has
+since been ingested. The list was not updated, so the project's own
+methodology reference spent several ingestions telling readers that data it
+holds hundreds of thousands of rows of did not exist:
+
+Each line below records what the list *used to* claim, against what the
+database actually holds:
+
+- Qualifying results and grid position — used to be listed as absent; there are
+  9,577 qualifying rows, and `grid` is set on all 10,550 results.
+- Fastest laps — used to be listed as absent; 8,725 results carry a
+  fastest-lap time, covering 2004–2025.
+- Finishing status, and the DNF and finish rates built on it — used to be
+  listed as absent; `classification` is set on all 10,550 results.
+- Championship points and standings — used to be listed as absent; `points` is
+  set on all 10,550 results and standings are served for all 26 seasons.
+- Race lap timing, lap by lap — used to be listed as absent; there are 552,138
+  lap timings across all 503 races.
+- Sector times and tyre compounds — used to be listed as absent; 211,257
+  practice laps carry them, for practice sessions only.
+- Pit stops — used to be listed as absent; 12,192 rows, 2011 onward.
+- Sprint results — used to be listed as absent; 480 rows, 2021 onward.
+
+The lesson is the one `backend/tests/test_no_stale_absence_claims.py` was
+written for and this file evaded: a claim about absent data has to be checked
+against the data, because prose cannot fail a build. Pole positions remain
+absent as such — qualifying P1 is counted and labelled `qualifying_p1`, which
+is not the same statistic (see below).
 
 > The design mockup's own Methodology screen describes a richer pipeline
 > (nightly Ergast ingest, DuckDB warehouse, grid position and fastest lap
@@ -93,7 +120,7 @@ Adding any of these requires new source columns first.
 
 ### Entry (start)
 One row in `results`: a driver classified in a race. Because the source has
-no status column, an entry does **not** imply the driver finished. This is
+positions include retirements, an entry does **not** imply the driver finished. This is
 the denominator for every rate.
 
 ### Win rate — `wins / entries`
@@ -188,6 +215,44 @@ the API returns the information needed to say so rather than a verdict.
 | Coverage starts at 2000 | All records are "within 2000–2025", never all-time |
 | Season lengths vary (16–24 races) | Cross-era season totals are not normalised; records state this |
 | Constructor identity | Entities follow the source's naming, which already groups Ergast-style (Sauber ↔ BMW Sauber ↔ Alfa Romeo are separate rows). Distinct constructors are never merged without evidence. |
+| Championship penalties are not in the results | See §6.1 below. Two constructor totals cannot be reached by summing race results. |
+
+### 6.1 Championship penalties
+
+A championship penalty is applied by the FIA to the **championship**, not to
+the race classifications it is summed from. The source carries the race
+results — correct, and unchanged by the penalty — and carries no record of the
+deduction. Constructor standings are derived by summing driver points, so for
+two seasons that sum disagreed with the official final table, and in one of
+them it named the wrong champion.
+
+| Season | Constructor | Scored | Official | Penalty |
+|---|---|---|---|---|
+| 2007 | McLaren | 218 | **0** | Excluded from the Constructors' Championship (FIA WMSC, 13 Sept 2007). Ferrari won the title with 204. |
+| 2020 | Racing Point | 210 | **195** | 15 points deducted (FIA Stewards, Styrian GP, brake-duct protest upheld). Position (4th) unchanged. |
+
+How this is handled:
+
+* The penalty is modelled as **the deduction**, in
+  `analytics.CONSTRUCTOR_PENALTIES` — not as a hand-entered final total. The
+  total is still derived: sum the results, then apply what the FIA applied. A
+  typed-in total could not be checked against anything.
+* One table serves **both backends**, so SQLite and Supabase cannot disagree
+  about a championship.
+* **Race wins and podiums are not adjusted.** McLaren won eight races in 2007
+  and those races happened; the exclusion removed championship points, not
+  results. The row reads "0 points, 8 wins", which is the sporting outcome as
+  the record holds it.
+* **Driver points are untouched** — explicitly unaffected in both cases, which
+  is why the driver standings already reconciled exactly for all 26 seasons.
+* An adjusted row carries a `penalty` object through the API and into the
+  frontend types, holding what was scored, what was removed, and the evidence.
+  A number that changed for a reason the reader cannot see is the thing this
+  project treats as fabrication.
+
+Pinned by `backend/tests/test_api.py` against the official classifications,
+including unpenalised seasons on either side so the correction cannot quietly
+start applying where it does not belong.
 
 ---
 
@@ -320,8 +385,16 @@ comparable with a 13-win season in an 18-race year. Reported alongside the
 count of distinct race winners, which is the plainest concentration signal
 available.
 
-**Limitation.** Not normalised for grid size or regulation era. **Points-based
-dominance is not computed** — the dataset has no points column.
+**Limitation.** Not normalised for grid size or regulation era.
+
+**Points share is reported alongside it**, as each leader's share of all points
+scored that season (race plus sprint, as awarded under that season's rules).
+
+The two are **not on a common scale and must not be compared with each other**.
+Every points-scoring finisher dilutes points share, so it is bounded well below
+1.0 however dominant the leader was: 2023 reads 0.86 win share against 0.24
+points share, and that gap is arithmetic, not a finding. Compare each against
+the *same* measure in another season.
 
 ### Top-5 / top-10 rates
 

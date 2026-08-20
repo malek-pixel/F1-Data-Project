@@ -30,8 +30,13 @@ Every derived number comes from `backend/app/analytics.py`. Definitions are in
 - Rates are `null` when `entries` is 0, and `0.0` when there are entries but no wins. These are different facts.
 - `rates_reliable` is `false` below 10 entries. The value is still returned; clients mark it rather than hiding it.
 
+List items additionally carry `id`, `slug`, `name` and `nationality`, so a
+listing renders without a request per row.
+
 **Errors** return `{"detail": "..."}` with a real status code. Database faults
-log server-side and return a generic 503 — internals are never exposed.
+log server-side and return a generic 503 — internals are never exposed. This
+holds for both stores: a Supabase outage is a 503 with a `detail` body, not a
+bare 500, and neither the URL nor the key appears in the response.
 
 | Status | Meaning |
 |---|---|
@@ -39,11 +44,26 @@ log server-side and return a generic 503 — internals are never exposed.
 | 400 | Semantically invalid (e.g. comparing an entity with itself) |
 | 404 | No such entity |
 | 422 | Failed parameter validation (unknown sort key, out-of-range limit) |
+| 501 | The active data store has no implementation for this endpoint. **Not retryable** — nothing is broken |
 | 503 | Data store unavailable — retryable |
 
 **Pagination.** List endpoints take `limit` (1–200, default 50) and `offset`,
 returning `{total, limit, offset, items}`. `total` is the count *before*
-pagination but *after* filtering.
+pagination but *after* filtering. An offset past the last row is an empty
+`items` with the real `total` — not an error, on either store.
+
+**Sort order is total.** Every sort ends in the entity slug, so two entities
+level on the named columns cannot come back in an arbitrary order and a page
+boundary is stable across requests and across stores.
+
+**Identifiers.** `id` is assigned independently by each store and means
+nothing across them — Hamilton is 48 in SQLite and 65 in Postgres. **Link on
+`slug`.** Endpoints accept either, and legacy numeric URLs keep resolving.
+
+**Which store answered** is reported by `/api/health` as `backend`. 28 of the
+30 routes dispatch through the backend switch and are compared response for
+response by `test_api_payload_parity.py`; `/api/insights` returns 501 under
+Supabase and `/api/analytics/metrics` reads no store at all.
 
 **Sorting.** `sort` accepts `wins`, `podiums`, `entries`, `win_rate`,
 `podium_rate`, `avg_position`, `name`. Anything else is a 422 — the ORDER BY
@@ -122,7 +142,11 @@ constructor's** totals, so they sum to 1.0. A share is `null` when the team
 recorded none of that result type (never `0.0`, which would imply a share of a
 real total).
 
-There is no points share. The source has no points column.
+Share of *points* is not offered. Points exist and are returned in each
+driver's stat block, but a share of them would answer a different question
+from the shares above: a driver can take a large share of a team's points
+across many small finishes without a share of its wins. The three shares
+here are all counts of the same kind of event.
 
 ---
 
@@ -148,9 +172,15 @@ Per-season counts: races, entries, distinct drivers, distinct constructors.
 ### `GET /api/seasons/{season}`
 Season summary with `drivers[]`, `constructors[]` and `races_list[]`.
 
-**`ranking_basis` is always `"wins"`.** These are *not* championship standings —
-no points column exists, so entities are ranked by wins, then podiums, then
-average classified position. Clients must label this.
+Returns **both**, and they must not be conflated.
+
+`standings` is the real championship — race plus sprint points, verified to
+reproduce the official champion and points total for every covered season.
+
+`drivers[]` / `constructors[]` are ordered by wins, then podiums, then average
+classified position, and **`ranking_basis` is always `"wins"`** to say so.
+They answer "who won the most races", which is a different question: a driver
+can top that table without winning the championship. Clients must label them.
 
 404 for a season with no races.
 
@@ -206,9 +236,19 @@ asserts a cause.
 Schema shape, row counts, coverage, `available_fields`, `unavailable_fields`
 and `known_issues`. No filesystem paths or connection details.
 
+### `GET /api/cars`
+Constructor-seasons grouped by constructor — the Car Library's unit, since the
+source carries no chassis designations. Each car reports races, entries, wins,
+podiums, best classified position, average classified position, the drivers who
+raced it, and an `era` (`current` / `recent` / `retired`) derived from the
+season relative to the dataset's last. `chassis_available` is always `false`
+until a chassis dataset is added.
+
 ### `GET /api/search`
-Global search across drivers, constructors, circuits and seasons. `q` (1–100
-chars, required), `limit` (1–25). Prefix matches rank first, then by wins.
+Global search across drivers, constructors, circuits, races and seasons. `q`
+(1–100 chars, required), `limit` (1–25). Prefix matches rank first, then by
+wins. A query containing a four-digit year is split into a season filter and a
+name, so `2004 monza` finds the 2004 Italian Grand Prix.
 
 ---
 

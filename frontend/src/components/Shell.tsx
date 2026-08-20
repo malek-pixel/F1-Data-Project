@@ -1,5 +1,10 @@
 import { NavLink, Outlet, useLocation } from "react-router-dom";
+
+import { ErrorBoundary } from "./ErrorBoundary";
 import { CommandPalette, useCommandPalette } from "./CommandPalette";
+import { Dock, type DockItem } from "./Dock";
+import { DynamicIsland, type IslandState } from "./DynamicIsland";
+import { PageTransition } from "./motion";
 import { Icons, type IconName } from "./icons";
 import { useApi } from "../hooks/useApi";
 import type { Health } from "../types";
@@ -15,7 +20,7 @@ import type { Health } from "../types";
  * Two deliberate departures, both because the mockup prototyped against
  * sample data and this app runs on the real dataset:
  *
- *   - The rail's trailing settings cog is replaced by Dataset and Methodology.
+ *   - The rail's trailing settings cog is replaced by Search and Dataset.
  *     There is nothing to configure, and a control that does nothing is worse
  *     than one that goes somewhere real.
  *   - The provenance bar shows counts from /health, never literals. The
@@ -37,15 +42,14 @@ const RAIL: RailItem[] = [
   { to: "/circuits", label: "Circuits", icon: "circuits" },
   { to: "/races", label: "Races", icon: "races" },
   { to: "/seasons", label: "Seasons", icon: "seasons" },
-  { to: "/insights", label: "Insights", icon: "insights" },
   { to: "/records", label: "Records", icon: "records" },
   { to: "/cars", label: "Cars", icon: "cars", badge: "NEW" },
   { to: "/compare", label: "Compare", icon: "compare" },
 ];
 
 const RAIL_FOOT: RailItem[] = [
+  { to: "/search", label: "Search", icon: "search" },
   { to: "/dataset", label: "Dataset", icon: "dataset" },
-  { to: "/methodology", label: "Methodology", icon: "methodology" },
 ];
 
 /** Breadcrumb label for the current route, matched longest-prefix-first. */
@@ -56,11 +60,10 @@ const CRUMBS: [string, string][] = [
   ["/races", "Races"],
   ["/seasons", "Seasons"],
   ["/compare", "Compare"],
-  ["/insights", "Insights"],
   ["/records", "Records"],
   ["/cars", "Cars"],
+  ["/search", "Search"],
   ["/dataset", "Dataset"],
-  ["/methodology", "Methodology"],
 ];
 
 function RailLink({ item }: { item: RailItem }) {
@@ -79,6 +82,11 @@ export function Shell() {
   const { pathname } = useLocation();
   const crumb = CRUMBS.find(([prefix]) => pathname.startsWith(prefix))?.[1] ?? "Overview";
   const info = health.data;
+  const island: IslandState = health.error
+    ? { kind: "error", label: "api unreachable" }
+    : info
+      ? { kind: "ok", label: "healthy" }
+      : { kind: "loading", label: "connecting" };
 
   return (
     <>
@@ -89,13 +97,11 @@ export function Shell() {
       <div className="shell">
         <div className="rail">
           <div className="rail__brand">
-            <img src="/f1-logo.png" alt="F1" />
+            <img src="/f1-logo.png" alt="F1" width={34} height={17} decoding="async" />
           </div>
-          <nav aria-label="Primary" className="rail__nav">
-            {RAIL.map((item) => (
-              <RailLink key={item.to} item={item} />
-            ))}
-          </nav>
+          {/* The rail is the dock: icons magnify toward the pointer and the
+              label the icon-only column hides rides out beside it. */}
+          <Dock items={RAIL as DockItem[]} />
           <div className="rail__spacer" />
           <nav aria-label="Reference" className="rail__nav">
             {RAIL_FOOT.map((item) => (
@@ -119,10 +125,15 @@ export function Shell() {
             ) : (
               <span className="bar__scope">ANALYSIS · loading coverage…</span>
             )}
-            <span className="bar__source">SOURCE · results.csv · Ergast-derived</span>
-            <span className={`bar__status bar__status--${health.error ? "down" : info ? "ok" : "wait"}`}>
-              <span aria-hidden="true">●</span> {health.error ? "api unreachable" : info ? "healthy" : "connecting"}
-            </span>
+            {/* Two providers, named. This used to read "results.csv ·
+                Ergast-derived", which was true when the whole dataset was one
+                seven-column file and understates it now: points, grid,
+                status, qualifying, sprints, pit stops and lap timings come
+                from Jolpica-F1, and practice timing from FastF1. Attributing
+                all of it to one CSV in the most-read line in the app is both
+                inaccurate and short of what those sources are owed. */}
+            <span className="bar__source">SOURCE · Jolpica-F1 (Ergast lineage) · FastF1</span>
+            <DynamicIsland state={island} />
           </div>
 
           {/* Context bar: where you are, and the one global control. */}
@@ -134,17 +145,38 @@ export function Shell() {
             <span className="bar__sub mono">
               {info ? `${info.seasons} seasons · ${info.races} races · static dataset` : " "}
             </span>
-            <button className="bar__search" onClick={() => palette.setOpen(true)}>
-              <span className="bar__label">Search drivers, constructors, circuits…</span>
-              <span className="mono bar__kbd">⌘K</span>
+            {/* The name is stated, not inferred from the text inside. Below
+                720px `.bar__label` is display:none, which left this button --
+                the app's only global search -- announcing itself as "⌘K". The
+                shortcut glyph is decoration for people who can see it. */}
+            <button
+              className="bar__search"
+              onClick={() => palette.setOpen(true)}
+              aria-label="Search drivers, constructors and circuits"
+              aria-keyshortcuts="Meta+K Control+K"
+            >
+              <span className="bar__label" aria-hidden="true">
+                Search drivers, constructors, circuits…
+              </span>
+              <span className="mono bar__kbd" aria-hidden="true">
+                ⌘K
+              </span>
             </button>
           </div>
 
           <main id="main" className="main" tabIndex={-1}>
-            <Outlet />
+            {/* Inside the shell, not around it: a render failure on one
+                screen leaves the navigation, search and dataset banner intact,
+                so the reader can leave without reloading. Keyed on pathname so
+                the error clears when they do. */}
+            <ErrorBoundary resetKey={pathname}>
+              <PageTransition>
+                <Outlet />
+              </PageTransition>
+            </ErrorBoundary>
 
             <footer className="page-foot mono">
-              <span>SOURCE · results.csv</span>
+              <span>SOURCE · Jolpica-F1 · FastF1</span>
               {info && (
                 <>
                   <span>

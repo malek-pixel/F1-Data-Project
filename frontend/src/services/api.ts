@@ -18,7 +18,11 @@ async function request<T>(path: string, signal?: AbortSignal): Promise<T> {
     response = await fetch(path, { signal, headers: { Accept: "application/json" } });
   } catch (error) {
     if (signal?.aborted) throw error;
-    throw new ApiError("Could not reach the API. Is the backend running?", 0, true);
+    // Worded for a reader, not for whoever deployed this. In production the
+    // API is same-origin, so this branch is the ordinary "your connection
+    // dropped" path -- and "is the backend running?" is not a question a
+    // visitor can act on. It says what failed, and what to try.
+    throw new ApiError("Could not connect. Check your internet connection and try again.", 0, true);
   }
 
   if (!response.ok) {
@@ -29,10 +33,14 @@ async function request<T>(path: string, signal?: AbortSignal): Promise<T> {
     // Note the dev server proxies /api, so an unreachable backend arrives here
     // as a 500/502 rather than a thrown fetch: the network-error branch below
     // only fires when the API is same-origin or CORS-blocked.
+    // Same reasoning as the network branch: a visitor is not running this
+    // locally. The server's own {detail} replaces this whenever it sends one,
+    // and it does for every handled failure -- this is the last resort for a
+    // dead upstream or a proxy error page.
     let detail =
       response.status >= 500
-        ? "The API is not responding. If you are running this locally, check the backend is started."
-        : `Request failed (${response.status})`;
+        ? "This data is temporarily unavailable. Please try again in a moment."
+        : `That request could not be completed (${response.status}).`;
     try {
       const body = await response.json();
       if (typeof body?.detail === "string") detail = body.detail;

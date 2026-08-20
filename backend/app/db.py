@@ -35,15 +35,58 @@ def get_db() -> Iterator[sqlite3.Connection]:
 # trusted to stay a literal at every call site.
 LOOKUP_TABLES = frozenset({"drivers", "constructors", "circuits", "races"})
 
+# Tables carrying a stable, source-derived `slug`. These are the entities the
+# API accepts by name as well as by number. `races` is absent deliberately: it
+# has no slug column, its natural key being (season, round).
+SLUGGED_TABLES = frozenset({"drivers", "constructors", "circuits"})
 
-def fetch_one_or_404(conn: sqlite3.Connection, table: str, entity_id: int) -> sqlite3.Row:
-    """Look up an entity by id, raising a 404 rather than returning None."""
+# SQLite stores integers as signed 64-bit. Binding anything wider raises
+# OverflowError from the driver -- not sqlite3.Error, so the API's database
+# handler never saw it and the request died as a bare 500 with no `detail`
+# body, against the contract every other failure here keeps. A URL carrying
+# a number this large is simply asking for a row that cannot exist, so it is
+# a 404 like any other unknown id, not a server fault.
+SQLITE_MAX_INT = 2**63 - 1
+SQLITE_MIN_INT = -(2**63)
+
+# Upper bound for an id arriving in a URL. Same reasoning as above, stated as
+# its own name because routers bind it with `le=` and reading `MAX_ID` at a
+# call site is clearer than reading a power of two.
+MAX_ID = SQLITE_MAX_INT
+
+
+def fetch_one_or_404(
+    conn: sqlite3.Connection, table: str, entity_id: int | str
+) -> sqlite3.Row:
+    """Look up an entity by slug or integer id, 404ing rather than returning None.
+
+    WHY BOTH
+    --------
+    The slug is the real identity: it is the only key that means the same
+    thing here and in the Postgres materialisation, where integer ids come
+    from an unrelated sequence. New links should use it.
+
+    Integer ids keep resolving because they are already in circulation --
+    every existing `/drivers/48` bookmark would otherwise 404. They are
+    accepted, not preferred, and a numeric-looking value is only ever tried as
+    an id, never as a slug, so the two key spaces cannot collide.
+    """
     from fastapi import HTTPException
 
     if table not in LOOKUP_TABLES:
         raise ValueError(f"{table!r} is not a lookup table")
 
-    row = conn.execute(f"SELECT * FROM {table} WHERE id = ?", [entity_id]).fetchone()
+    key = str(entity_id)
+    if key.isdigit():
+        column, value = "id", int(key)
+        if not SQLITE_MIN_INT <= value <= SQLITE_MAX_INT:
+            raise HTTPException(status_code=404, detail=f"No {table[:-1]} {entity_id!r}")
+    elif table in SLUGGED_TABLES:
+        column, value = "slug", key
+    else:
+        raise HTTPException(status_code=404, detail=f"No {table[:-1]} {entity_id!r}")
+
+    row = conn.execute(f"SELECT * FROM {table} WHERE {column} = ?", [value]).fetchone()
     if row is None:
-        raise HTTPException(status_code=404, detail=f"No {table[:-1]} with id {entity_id}")
+        raise HTTPException(status_code=404, detail=f"No {table[:-1]} {entity_id!r}")
     return row

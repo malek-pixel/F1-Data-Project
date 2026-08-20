@@ -11,6 +11,14 @@ export default defineConfig({
   server: {
     port: 5173,
     // The API is the authority on every number; the dev server only proxies.
-    proxy: { "/api": { target: "http://127.0.0.1:8000", changeOrigin: true } },
+    // F1_API_TARGET overrides the port so a second backend -- one bound to
+    // F1_BACKEND=supabase, say -- can be driven through the same UI without
+    // editing this file.
+    proxy: {
+      "/api": {
+        target: process.env.F1_API_TARGET ?? "http://127.0.0.1:8000",
+        changeOrigin: true,
+      },
+    },
   },
 });

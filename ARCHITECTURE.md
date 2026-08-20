@@ -13,6 +13,11 @@ data/f1.db                     SQLite build artefact, not tracked in git
     ├── backend/app/analytics.py   source of truth for CALCULATIONS
     ├── backend/app/routers/       REST surface, input validation
     ▼
+    │
+    ├── supabase/migrations/*.sql  the same data as Postgres views
+    ▼
+backends.serve() ── picks the store per request (F1_BACKEND)
+    │
 FastAPI (:8000)  ── /api ──▶  React + Vite (:5173)   presentation only
 ```
 
@@ -67,6 +72,29 @@ patterns are escaped. Nothing is interpolated into SQL.
 Connections open in SQLite read-only mode (`mode=ro`). A bug in a router raises
 rather than corrupting the dataset.
 
+### `backend/app/backends.py` — which store answers
+
+The same dataset is materialised twice: `data/f1.db` (SQLite, rebuilt from the
+CSV) and a hosted Postgres project (Supabase, read over PostgREST). `F1_BACKEND`
+selects between them per request.
+
+`serve(endpoint, sqlite_impl, supabase_impl)` runs whichever the active backend
+provides and **raises rather than falling back**. A silent fallback would let
+the Supabase leg appear to work while never being exercised — which is exactly
+what happened for as long as two thirds of the routes never called `serve` at
+all, and what the payload-parity suite failed to catch while it was comparing
+one store against itself.
+
+28 of 30 routes dispatch. `/api/insights` has no Postgres implementation and
+returns 501 under Supabase; `/api/analytics/metrics` returns Python constants
+and touches no store. `test_api_payload_parity.py` compares 77 request paths
+across both stores, response for response.
+
+The metric definitions live in `analytics.py` for SQLite and in the migration
+views for Postgres. Where a definition would otherwise be written twice — the
+record list, the dominance basis string, the rounding rule — it is a shared
+Python constant that both legs read.
+
 ### `frontend/` — presentation
 
 React + TypeScript + Vite. `src/types.ts` mirrors `schemas.py`. Components
@@ -93,7 +121,7 @@ and the formatters — `num()`/`pct()` render `null` as an em dash, never as 0.
 `rates_reliable: false` and are marked in the UI. Records apply the threshold as
 a hard filter so a one-race driver cannot top a rate table.
 
-**Season rankings are labelled.** No points column exists, so season tables rank
+**Season rankings are labelled.** Alongside the real points standings, season tables also rank
 by wins and every one of them says so on screen.
 
 ## Testing
@@ -111,8 +139,46 @@ hand.
 
 ## Extending
 
-**Adding a season:** append to `results.csv`, check `circuit_map.csv` covers any
-new race name, rebuild. The build fails loudly if it does not.
+**Adding a season.** This used to read "append to `results.csv`, check
+`circuit_map.csv`, rebuild". That was the whole procedure when the database
+held seven columns. It no longer is: `results.csv` is the spine, but points,
+grid, status, qualifying, sprints, pit stops, lap timings and practice each
+come from their own committed extract, and a season added to the spine alone
+produces a database that is *structurally* valid and *materially* incomplete.
+
+Order matters — each step's output is the next step's input:
+
+| # | Step | Command |
+|---|---|---|
+| 1 | Extend the spine | append the season's classifications to `results.csv` |
+| 2 | Cover new race names | add any new venue to `backend/etl/circuit_map.csv` (the build **fails** on an unmapped name rather than dropping the race) |
+| 3 | Refetch Jolpica (network, 500 req/hour) | `python -m backend.etl.fetch_until_done` |
+| 4 | Rewrite the enrichment extracts | `build_enrichment`, `build_dimensions`, `build_sessions` |
+| 5 | Lap timings | `python -m backend.etl.laps_until_done` then `build_laps` |
+| 6 | Practice (FastF1, 2018+) | `python -m backend.etl.practice` then `build_practice` |
+| 7 | Rebuild | `python -m backend.etl.build --report` |
+| 8 | Prove it | `python -m backend.etl.audit` **and** `python -m backend.etl.crossvalidate` |
+| 9 | Push to Postgres | `python -m backend.etl.supabase_import`, then `pytest backend/tests -q` with credentials set |
+
+**Step 8 is the gate, and it is designed to fail on a half-added season.** The
+audit's coverage floors assert that every race from 2003 has qualifying, every
+race has lap timings, every race from 2012 has pit stops, and that every season
+carries the sprint, practice and timetable data its era should. Adding a season
+to `results.csv` and stopping there trips **all six** — verified by inserting a
+spine-only 2026 round into a copy of the database. That is the intended
+behaviour: before those floors existed, the
+same half-finished season passed the audit silently and the application
+rendered the missing datasets as "unavailable", which tells a reader the data
+does not exist rather than that it was not loaded.
+
+Two things the pipeline cannot check for you:
+
+* **`circuit_map.csv` encodes external knowledge, not source data.** A renamed
+  or relocated Grand Prix needs a human decision about circuit identity.
+* **`frontend/src/components/carPhoto.ts`** holds a hand-maintained list of
+  seasons per constructor. It is presentation only — a missing entry degrades
+  to a labelled fallback, never a wrong figure — but it will not pick up a new
+  season on its own.
 
 **Adding a metric:** define it in `analytics.py` with its docstring, add it to
 the schema, surface it. Update `METHODOLOGY.md` in the same change.
@@ -121,7 +187,14 @@ the schema, surface it. Update `METHODOLOGY.md` in the same change.
 without reshaping existing tables. The Car Library page is already built against
 that absence and will render real fields when they exist.
 
-**Adding qualifying/points/status:** these unlock the largest set of currently
-impossible metrics — championship standings, DNF rate, points-per-race, pole
-rate. They require new source columns; nothing in the current pipeline
-approximates them.
+**Qualifying, points and status are ingested.** This section used to say they
+were the missing columns behind "the largest set of currently impossible
+metrics — championship standings, DNF rate, points-per-race, pole rate". All
+of it is now served: `points` and `classification` on all 10,550 results,
+9,577 qualifying rows, 552,138 lap timings, 12,192 pit stops, and the
+fastest-lap enrichment for 2004 onward. Standings reproduce the official
+champion and points total for every covered season.
+
+Pole position remains genuinely absent *as such*: qualifying P1 is counted and
+labelled `qualifying_p1`, because the two diverge in the sprint era and the
+field name has to say what was measured.

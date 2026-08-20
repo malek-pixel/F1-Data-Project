@@ -1,6 +1,7 @@
 import type { SeasonStats } from "../types";
 import { dec } from "../components/format";
 import { AXIS, ChartFrame, TICK, labelEvery, ticks } from "./Chart";
+import { SERIES } from "./palette";
 
 const W = 760;
 const H = 240;
@@ -50,7 +51,7 @@ function DataTable({
  * Wins by season. Bars, because seasons are discrete categories being
  * compared -- not a continuous trend.
  */
-export function WinsBySeason({ data, color = "#e10600" }: { data: SeasonStats[]; color?: string }) {
+export function WinsBySeason({ data, color = SERIES[0] }: { data: SeasonStats[]; color?: string }) {
   const max = Math.max(1, ...data.map((d) => d.wins));
   const band = PLOT_W / Math.max(1, data.length);
   const barWidth = Math.min(28, band * 0.68);
@@ -124,7 +125,7 @@ export function WinsBySeason({ data, color = "#e10600" }: { data: SeasonStats[];
  * The y axis is inverted: P1 sits at the top, because "up = better" is what a
  * reader expects and an un-inverted position axis reads backwards.
  */
-export function AvgPositionBySeason({ data, color = "#0090ff" }: { data: SeasonStats[]; color?: string }) {
+export function AvgPositionBySeason({ data, color = SERIES[1] }: { data: SeasonStats[]; color?: string }) {
   const points = data.filter((d) => d.avg_classified_position !== null);
   const max = Math.ceil(Math.max(3, ...points.map((d) => d.avg_classified_position!)));
   const band = PLOT_W / Math.max(1, points.length);

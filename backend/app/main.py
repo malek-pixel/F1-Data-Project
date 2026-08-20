@@ -16,10 +16,17 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from . import backends, supabase_repo
 from .db import connect
 from .routers import analysis, analytics_router, calendar, entities
 
 log = logging.getLogger(__name__)
+
+# Fail at import, not on the first request. A backend misconfiguration is a
+# deployment error; discovering it as an intermittent 503 later is strictly
+# worse than refusing to start.
+ACTIVE_BACKEND = backends.check_ready()
+log.info("Serving from backend: %s", ACTIVE_BACKEND)
 
 # Origins are configured, never wildcarded -- the default covers the local
 # Vite dev server only.
@@ -29,10 +36,23 @@ app = FastAPI(
     title="F1 Data Project API",
     version="1.0.0",
     description=(
-        "Analytical API over 2000-2025 Formula 1 race classifications.\n\n"
-        "Every derived number is defined once in `backend/app/analytics.py`. "
-        "Qualifying, points, finishing status, lap times and car specifications are "
-        "absent from the source data and are never estimated -- see `/api/dataset/summary`."
+        # No season range here on purpose: this string is built once at import,
+        # before any connection exists, so a literal would be a claim nothing
+        # re-checks. The live window is served by `/api/dataset/summary`.
+        "Analytical API over Formula 1 race classifications.\n\n"
+        "The seasons covered are whatever the build contains -- see "
+        "`/api/dataset/summary` for the authoritative window.\n\n"
+        "Every derived number is defined once in `backend/app/analytics.py`.\n\n"
+        # No list of absent datasets here either. The previous version of this
+        # string named qualifying, points and finishing status as absent, and
+        # went on saying so for as long as it took someone to read it against
+        # the database. Availability is counted from rows and served by
+        # `/api/dataset/summary`; this description points at that rather than
+        # duplicating a claim nothing re-checks.
+        "Which datasets are present, partial or absent is measured from the "
+        "database itself and reported by `/api/dataset/summary`. Nothing is "
+        "estimated or inferred: a value that is not in a source is absent, "
+        "never approximated."
     ),
 )
 
@@ -57,14 +77,41 @@ async def database_error(request: Request, exc: sqlite3.Error) -> JSONResponse:
     return JSONResponse(status_code=503, content={"detail": "Data store unavailable. Retry shortly."})
 
 
-@app.get("/api/health", tags=["meta"])
-def health():
-    """Liveness plus dataset coverage and entity counts.
+@app.exception_handler(supabase_repo.SupabaseError)
+async def supabase_error(request: Request, exc: Exception) -> JSONResponse:
+    """The Supabase leg's equivalent of the handler above.
 
-    The client renders every "129 drivers"-style figure from this payload
-    rather than hardcoding it in copy, so the text cannot go stale when the
-    dataset changes.
+    Only sqlite3.Error was handled, so a Supabase outage escaped as a bare
+    500 "Internal Server Error" with no JSON body -- against the documented
+    contract (503, retryable, `{"detail"}`) and against the client, which
+    reads `detail` to tell a reader what to do. Verified by pointing
+    SUPABASE_URL at a dead host.
+
+    The message is deliberately generic and the real error goes to the log:
+    the URL and key live in the exception text.
     """
+    log.exception("Supabase error on %s", request.url.path)
+    return JSONResponse(
+        status_code=503, content={"detail": "Data store unavailable. Retry shortly."}
+    )
+
+
+@app.exception_handler(backends.CapabilityMissing)
+async def capability_missing(request: Request, exc: Exception) -> JSONResponse:
+    """An endpoint the selected backend cannot serve.
+
+    501 rather than 503: retrying will not help, because nothing is broken --
+    this backend simply has no implementation. The distinction matters to a
+    client deciding whether to back off and try again.
+    """
+    log.warning("Capability missing on %s: %s", request.url.path, exc)
+    return JSONResponse(
+        status_code=501,
+        content={"detail": "This endpoint is not available on the active data store."},
+    )
+
+
+def _health_sqlite() -> dict:
     conn = connect()
     try:
         row = conn.execute(
@@ -90,4 +137,30 @@ def health():
         "circuits": counts["circuits"],
         "circuits_with_map": mapped,
         "live_data": False,
+    }
+
+
+@app.get("/api/health", tags=["meta"])
+def health():
+    """Liveness plus dataset coverage and entity counts.
+
+    The client renders every "129 drivers"-style figure from this payload
+    rather than hardcoding it in copy, so the text cannot go stale when the
+    dataset changes.
+
+    Dispatched through `backends.serve` like every other route, and NOT
+    hardwired to SQLite. That distinction is the whole point of a health
+    check: this endpoint reads SQLite unconditionally, so with
+    F1_BACKEND=supabase and Supabase unreachable, every real route returned
+    503 while this one returned 200 "ok". An uptime check pointed here --
+    which is exactly what docs/OPERATIONS.md recommends as the first thing to
+    add -- would have reported the application healthy while it served
+    nothing. Now a store outage surfaces here as the same 503 a client gets.
+    """
+    payload = backends.serve("health", _health_sqlite, supabase_repo.health)
+    return {
+        **payload,
+        # Which store actually answered, and what it can answer. Stated so a
+        # reader never has to infer the backend from the numbers.
+        **backends.describe(),
     }

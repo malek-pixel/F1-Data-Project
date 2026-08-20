@@ -5,6 +5,7 @@ import { DriverContributionChart } from "../charts/ContributionChart";
 import { DataTable } from "../components/DataTable";
 import { ConsistencySection } from "../components/Consistency";
 import { Async, Unavailable } from "../components/States";
+import { teamLogo } from "../components/teamLogo";
 import { dec, num, pct, seasonSpan } from "../components/format";
 import { Badge, Cell, CellGrid, Panel, PendingCell, SectionTitle, Tabs } from "../components/ui";
 import { useApi } from "../hooks/useApi";
@@ -42,9 +43,23 @@ export function ConstructorDetail() {
                 </div>
               </div>
               <div className="entity-head__actions">
-                <Link className="btn" to={`/compare?kind=constructors&left=${team.id}`}>
+                <Link className="btn" to={`/compare?kind=constructors&left=${team.slug}`}>
                   Compare
                 </Link>
+                {/* Mockup § 07 hangs a car gallery off the team page. */}
+                <Link className="btn" to={`/cars?team=${encodeURIComponent(team.name)}`}>
+                  Cars
+                </Link>
+                {teamLogo(team.name) ? (
+                  <div className="entity-head__portrait gallery__media gallery__media--logo">
+                    <img src={teamLogo(team.name)!} alt="" decoding="async" width={320} height={320} />
+                  </div>
+                ) : (
+                  <div className="entity-head__portrait gallery__media mono">
+                    LIVERY
+                    <span>to be added</span>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -64,8 +79,11 @@ export function ConstructorDetail() {
               />
             </CellGrid>
             <CellGrid cols={4}>
-              <PendingCell label="POINTS" why="No points column in results.csv" />
-              <PendingCell label="WCC TITLES" why="Titles require points; the source has none" />
+              <Cell label="POINTS" value={dec(team.stats.points)} note="All seasons, incl. sprints" />
+              {/* Titles need a season-by-season champion, which is a
+                  derivation over standings this app does not yet make.
+                  Points themselves are available and shown alongside. */}
+              <PendingCell label="WCC TITLES" why="Not derived: needs a champion per season, not just points" />
               <PendingCell label="BASE" why="Needs Ergast constructors.csv" />
               <PendingCell label="LIVERY" why="No livery or colour data in the source" />
             </CellGrid>
@@ -108,8 +126,9 @@ export function ConstructorDetail() {
           </div>
 
           <p style={{ fontSize: 13, color: "var(--text-dim)", marginTop: 0 }}>
-            <Badge tone="info">Methodology</Badge> Share of this constructor&rsquo;s own results, not share of
-            championship points — the source data has no points column.
+            <Badge tone="info">Methodology</Badge> Share of this constructor&rsquo;s own results (entries,
+            wins, podiums), not share of championship points. Points exist in the dataset; a points
+            share is simply a different question from the results share shown here.
           </p>
 
           <Async state={contribution} loadingRows={3}>
@@ -127,7 +146,7 @@ export function ConstructorDetail() {
                       {
                         key: "driver",
                         header: "Driver",
-                        render: (row) => <Link to={`/drivers/${row.driver_id}`}>{row.driver_name}</Link>,
+                        render: (row) => <Link to={`/drivers/${row.driver_slug}`}>{row.driver_name}</Link>,
                       },
                       { key: "entries", header: "Entries", numeric: true, render: (r) => num(r.entries) },
                       { key: "wins", header: "Wins", numeric: true, render: (r) => num(r.wins) },
@@ -167,10 +186,14 @@ export function ConstructorDetail() {
 
           <SectionTitle>Not available for this constructor</SectionTitle>
           <div className="grid grid--kpi">
-            <Unavailable label="CONSTRUCTORS' POINTS" why="No points column in results.csv." />
-            <Unavailable label="CHAMPIONSHIP TITLES" why="Titles require points; not derivable from classifications." />
-            <Unavailable label="RELIABILITY / DNFs" why="No finishing-status column." />
-            <Unavailable label="CAR SPECIFICATIONS" why="No car metadata in the dataset." />
+            {/* Points and DNFs were listed here as unavailable long after
+                they were ingested, so this panel told users a column was
+                missing while the API served it. Both are now shown in the
+                stat block above; only genuinely sourceless things remain. */}
+            <Unavailable label="CHAMPIONSHIP TITLES" why="Not derived: needs a champion per season, not just points." />
+            <Unavailable label="CAR SPECIFICATIONS" why="No source supplies chassis or engine detail." />
+            <Unavailable label="FASTEST LAPS" why="No source records the fastest lap of a race." />
+            <Unavailable label="LIVERY" why="No source supplies livery or colour data." />
           </div>
         </>
       )}

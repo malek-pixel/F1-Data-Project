@@ -13,6 +13,15 @@ export interface AsyncState<T> {
  * or unmount, so a slow response for an old path can never overwrite a newer
  * one -- the classic stale-render bug in search and filter UIs.
  *
+ * `data` is also cleared when `path` changes, which is the other half of the
+ * same bug and was missing. Aborting only stops the OLD response from
+ * arriving; it does not discard the old ANSWER. A component holding several
+ * of these hooks resolves them independently, so on /drivers/1 -> /drivers/2
+ * the masthead could render driver 2 while a sibling cell still showed
+ * driver 1's number -- a wrong figure under a correct name, with nothing to
+ * indicate it. Callers that want the previous value to persist across a
+ * refetch should hold it themselves.
+ *
  * Pass `path = null` to skip fetching (e.g. a comparison with only one side
  * chosen yet).
  */
@@ -34,6 +43,7 @@ export function useApi<T>(path: string | null): AsyncState<T> {
     const controller = new AbortController();
     controllerRef.current = controller;
 
+    setData(null);
     setLoading(true);
     setError(null);
     api

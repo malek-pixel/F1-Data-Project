@@ -11,7 +11,7 @@ import sqlite3
 import pytest
 
 from backend.app import advanced
-from backend.etl.build import SCHEMA
+from backend.etl.build import SCHEMA, slugify as slug
 
 # Two constructors, four drivers, two seasons of two races each.
 #
@@ -49,20 +49,22 @@ def conn() -> sqlite3.Connection:
     db.row_factory = sqlite3.Row
     db.executescript(SCHEMA)
     # Two circuits so circuit-level metrics have something to separate.
-    db.execute("INSERT INTO circuits VALUES (1, 'alpha', 'Alpha Circuit', 'Testland', 1)")
-    db.execute("INSERT INTO circuits VALUES (2, 'beta', 'Beta Circuit', 'Testland', 0)")
+    db.execute("INSERT INTO circuits (id, slug, name, country, has_map) VALUES (1, 'alpha', 'Alpha Circuit', 'Testland', 1)")
+    db.execute("INSERT INTO circuits (id, slug, name, country, has_map) VALUES (2, 'beta', 'Beta Circuit', 'Testland', 0)")
 
     drivers = {n: i for i, n in enumerate(["ALICE", "BOB", "CARA", "DAN"], start=1)}
     constructors = {n: i for i, n in enumerate(["Blue", "Red"], start=1)}
-    db.executemany("INSERT INTO drivers VALUES (?, ?)", [(i, n) for n, i in drivers.items()])
-    db.executemany("INSERT INTO constructors VALUES (?, ?)", [(i, n) for n, i in constructors.items()])
+    db.executemany("INSERT INTO drivers (id, slug, name) VALUES (?, ?, ?)",
+                   [(i, slug(n), n) for n, i in drivers.items()])
+    db.executemany("INSERT INTO constructors (id, slug, name) VALUES (?, ?, ?)",
+                   [(i, slug(n), n) for n, i in constructors.items()])
 
     races = {}
     for season, rnd, _, _, _ in FIXTURE:
         if (season, rnd) not in races:
             races[(season, rnd)] = len(races) + 1
             db.execute(
-                "INSERT INTO races VALUES (?, ?, ?, ?, ?, ?)",
+                "INSERT INTO races (id, season, round, name, date, circuit_id) VALUES (?, ?, ?, ?, ?, ?)",
                 (races[(season, rnd)], season, rnd, f"R{rnd}", f"{season}-01-0{rnd}", rnd),
             )
     db.executemany(
@@ -123,7 +125,7 @@ def test_teammates_split_by_constructor_not_merged(conn):
 
 
 def test_driver_with_no_teammate_returns_empty(conn):
-    conn.execute("INSERT INTO drivers VALUES (99, 'SOLO')")
+    conn.execute("INSERT INTO drivers (id, slug, name) VALUES (99, 'solo', 'SOLO')")
     assert advanced.teammate_records(conn, 99) == []
 
 

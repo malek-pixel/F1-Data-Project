@@ -6,7 +6,32 @@ pydantic>=2.6
 pytest>=8.0
 httpx>=0.27
 
-# Data acquisition only (f1_fetch.py), and the one place this project touches
-# the network. Not imported by the API, the ETL or the tests -- results.csv is
-# committed, so the application builds and runs without it.
+# Data acquisition and cross-validation. Used by f1_fetch.py and by
+# backend/etl/crossvalidate.py, which checks the dataset against Jolpica-F1.
+# Not imported by the API -- results.csv is committed, so the application
+# builds and runs offline.
 requests>=2.31
+
+# Supabase ingestion only (backend/etl/supabase_import.py). Server-side, needs
+# SUPABASE_DB_URL. The API never uses it: it reads Supabase over PostgREST with
+# the publishable key, so no application path holds the database password.
+psycopg[binary]>=3.1
+
+# Practice-session timing, tyre compounds and sector times (2018 onward).
+#
+# A SECOND SOURCE, deliberately kept distinct: FastF1 reads Formula 1's own
+# live-timing service, whereas everything else here comes from Jolpica, which
+# publishes no practice data at all. Its rows live in their own table so the
+# two providers can never be silently blended.
+#
+# Ingestion only -- backend/etl/practice.py. The API never imports it, so the
+# application still runs without this installed.
+fastf1>=3.4
+
+# Transitive, pinned only to clear PYSEC-2026-3625 (msgpack < 1.2.1). It
+# arrives via fastf1 -> CacheControl/signalrcore and is reached only when
+# ingesting practice timing; no application path imports it, and it is not in
+# the deployed API. Recorded rather than left implicit so the next `pip-audit`
+# does not re-raise a question already answered. Verified to resolve with
+# fastf1 unchanged.
+msgpack>=1.2.1

@@ -10,7 +10,7 @@ import sqlite3
 import pytest
 
 from backend.app import analytics
-from backend.etl.build import SCHEMA
+from backend.etl.build import SCHEMA, slugify as slug
 
 # Two seasons, two races each, three drivers, two constructors.
 #
@@ -31,19 +31,21 @@ def conn() -> sqlite3.Connection:
     db = sqlite3.connect(":memory:")
     db.row_factory = sqlite3.Row
     db.executescript(SCHEMA)
-    db.execute("INSERT INTO circuits VALUES (1, 'test', 'Test Circuit', 'Testland', 1)")
+    db.execute("INSERT INTO circuits (id, slug, name, country, has_map) VALUES (1, 'test', 'Test Circuit', 'Testland', 1)")
 
     drivers = {name: i for i, name in enumerate(["ALICE", "BOB", "CARA"], start=1)}
     constructors = {name: i for i, name in enumerate(["Blue", "Red"], start=1)}
     races = {}
-    db.executemany("INSERT INTO drivers VALUES (?, ?)", [(i, n) for n, i in drivers.items()])
-    db.executemany("INSERT INTO constructors VALUES (?, ?)", [(i, n) for n, i in constructors.items()])
+    db.executemany("INSERT INTO drivers (id, slug, name) VALUES (?, ?, ?)",
+                   [(i, slug(n), n) for n, i in drivers.items()])
+    db.executemany("INSERT INTO constructors (id, slug, name) VALUES (?, ?, ?)",
+                   [(i, slug(n), n) for n, i in constructors.items()])
 
     for season, rnd, _, _, _ in FIXTURE:
         if (season, rnd) not in races:
             races[(season, rnd)] = len(races) + 1
             db.execute(
-                "INSERT INTO races VALUES (?, ?, ?, ?, ?, 1)",
+                "INSERT INTO races (id, season, round, name, date, circuit_id) VALUES (?, ?, ?, ?, ?, 1)",
                 (races[(season, rnd)], season, rnd, f"R{rnd}", f"{season}-01-0{rnd}"),
             )
     db.executemany(

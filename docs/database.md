@@ -1,34 +1,48 @@
 # Database
 
-> **Status: built, not wired in.** The application you get by following
-> [README.md](../README.md) serves every request from the local SQLite build
-> (`data/f1.db`). The Supabase schema below is real and reproducible from its
-> migrations, and `backend/app/supabase_repo.py` reads it, but no router calls
-> that module today — see the status note at the top of the file. Both stores
-> are built from the same `results.csv` by the same validation rules, so the
-> numbers agree; only the SQLite path is exercised by the running app and by
-> the 109 tests that execute on a fresh clone.
+> **Status: wired and compared.** `F1_BACKEND` selects the store per request.
+> 28 of the 30 routes dispatch through `backends.serve`, and
+> `test_api_payload_parity.py` compares 77 request paths across both stores,
+> response for response. `/api/insights` has no Postgres implementation and
+> returns 501 under Supabase rather than quietly serving the SQLite answer;
+> `/api/analytics/metrics` reads no store at all.
+>
+> This banner used to read "**built, not wired in** ... no router calls that
+> module today". It was accurate when written. It stayed on the page after it
+> stopped being true, which is the same failure the rest of this repository
+> keeps having with prose about absent data.
+>
+> SQLite remains the default and the only leg with no external dependency, so
+> a fresh clone still builds and serves without credentials. Both stores are
+> built from the same `results.csv` by the same validation rules. Without
+> `SUPABASE_URL` / `SUPABASE_ANON_KEY` the Supabase suites skip, and a skip is
+> missing coverage rather than a pass.
 
 Supabase / PostgreSQL 17 is the PostgreSQL materialisation of the dataset.
 
 | | |
 |---|---|
-| Project | `f1-data-project` (`qdrxgymohkitpxedukdb`) |
+| Project | `f1-data-project` (project ref held in `.env`, not published) |
 | Region | eu-central-1 |
 | Engine | PostgreSQL 17.6 |
-| Migrations | 7, applied in order against the hosted project |
-| Security advisories | 0 *(as reported at the time of the entries below)* |
+| Migrations | 8, applied in order against the hosted project, checked in under `supabase/migrations/` |
+| Security advisories | 1 INFO, deliberate — see [Security](#security) |
 
-> **Verification status.** Everything below describes the hosted Supabase
-> project and was recorded when it was reachable. **None of it is
-> re-verifiable from this repository**: there are no `.sql` migration files
-> checked in, and the tests that would exercise it
-> (`backend/tests/test_supabase.py`, 24 cases) skip unless `SUPABASE_URL` and
-> `SUPABASE_ANON_KEY` are set — which they are not in a fresh clone. Treat the
-> schema, the RLS results, the index list and the advisory count as a record of
-> a past state, not as a claim this repository can prove. Reproducing the
-> deployment from scratch would require exporting the migrations into the repo
-> first.
+> **Verification status (re-audited 2026-08-13).** The hosted project was
+> reachable and was audited directly rather than from these notes.
+>
+> **Now re-verifiable from this repository.** All 8 migrations were recovered
+> from `supabase_migrations.schema_migrations` and checked in under
+> `supabase/migrations/`. They are not transcriptions-by-eye: each file's md5
+> is recorded in `supabase/migrations/CHECKSUMS.md5` against the md5 Postgres
+> holds for the SQL it actually applied, and `python supabase/verify_migrations.py`
+> recomputes them. All 8 match byte-for-byte.
+>
+> **Still not re-verifiable.** `backend/tests/test_supabase.py` (24 cases)
+> still skips unless `SUPABASE_URL` and `SUPABASE_ANON_KEY` are set, which they
+> are not in a fresh clone. The RLS results table below therefore remains a
+> record of a past check, not something a clone can prove — though the policies
+> producing it are now readable in migrations 02, 05, 07 and 08.
 
 ---
 
@@ -68,6 +82,7 @@ This single fact constrains the entire analytical layer.
 |---|---|---|
 | `data_sources` | 1 | Where data came from. Never invented attribution. |
 | `datasets` | 1 | Version, coverage, row count, SHA-256 of the source file. |
+| | | *Correction, 2026-08-13:* `checksum` was NULL — the stored row predated the code that writes it, so the column's stated guarantee was not being met. Backfilled to `63ec510c…6f7b` only after proving the file matches: all 10,550 rows were fingerprinted on both sides (md5 of the sorted seven-column projection) and agree exactly, `e4231564629c4abd8110daab82a60a0b`. It was not filled in on the strength of a matching row count. |
 | `data_quality_checks` | 13 | Every check from the last import, with severity. |
 | `metric_definitions` | 11 | Published methodology — definition, formula, limitations, sample rule. |
 
@@ -173,6 +188,13 @@ unfairly against a mid-season replacement.
 There is deliberately **no** write policy rather than a restrictive one: a
 policy that exists can be widened by accident; an absent policy cannot.
 
+**Open advisory, deliberate.** The linter reports one INFO:
+`rls_enabled_no_policy` on `staging_results`. That is the intended state, not a
+gap — staging has RLS on, no policy and no grant, so it is unreachable from any
+public key. The advisory fires because the linter cannot distinguish "forgot a
+policy" from "deliberately has none". Left as-is; adding a policy to silence it
+would weaken the table.
+
 Checked empirically with the publishable key — the only key a browser holds —
 against the hosted project at the time. Not re-verifiable from this repository
 (see the verification status note above):
@@ -266,7 +288,8 @@ reconciliation        15/15 checks pass
 | Category | Recoverable? |
 |---|---|
 | `results.csv` | **The only irreplaceable artefact.** Everything else derives from it. |
-| `circuit_map` seed + migrations | In the repository. |
+| Migrations | In the repository since 2026-08-13, checksum-verified against the applied SQL. |
+| `circuit_map` seed | In the repository. |
 | All tables | Rebuildable: run migrations, run the import. |
 | All views | Rebuildable from migration 06. |
 

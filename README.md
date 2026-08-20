@@ -20,24 +20,40 @@ number.
 - **Circuit records** — each driver's record at a circuit against their own career norm
 - **Season dominance and era views** — win share normalised by races held
 - **Head-to-head comparison** — raw totals and per-start rates shown separately, with an overlapping-seasons window, because career totals across different eras are not a like-for-like comparison
-- **Records and insights** — calculated, each stating its own methodology
+- **Records, eras and season dominance** — calculated, each stating its own methodology
 - **Dataset explorer** — schema, coverage, and the dataset's own known issues
-- **Methodology** — every formula, denominator and limitation
-- **Global search** (⌘K), keyboard-navigable
+- **Car library** — one entry per constructor-season, grouped by team and era
+- **Metric definitions** — every formula, denominator and limitation, on the Insights page
+- **Global search** — a full page (`/search`) plus the ⌘K palette, both keyboard-navigable
 
 ## What it deliberately does not do
 
-The source is seven columns. These are absent and are **never** estimated:
+These are absent from every source this project ingests, and are **never**
+estimated, inferred, or filled with a plausible number:
 
-> qualifying · grid position · pole positions · fastest laps · finishing status
-> (DNF/DNS/DSQ) · championship points · points-per-race · championship standings
-> · lap times · sector times · pit stops · tyre compounds · telemetry · sprint
-> results · car specifications
+> telemetry · car specifications · sector times outside practice · the official
+> **pole position** award · the official **fastest lap** award
+
+The last two are subtler than "no data": qualifying P1 is ingested and counted,
+but it does not reproduce official pole tallies in the sprint era, so it is
+labelled `qualifying_p1` and never "poles". The quickest lap anyone drove is
+likewise available wherever lap timings are, but the *award* carries
+eligibility rules no source publishes, so the two are never presented as the
+same thing.
+
+This list is short because it used to be long. Points, championship standings,
+grid, qualifying, finishing status, lap times, pit stops and sprints were all
+absent when this project started and have since been ingested — see
+[§ Dataset](#dataset). The list above is maintained by hand and will go stale
+the same way, which is why the application does not rely on it:
+`/api/dataset/summary` reports availability by **counting rows**, and
+`backend/etl/audit.py` fails the build if a dataset that should be there is
+not.
 
 Two consequences worth stating up front:
 
-1. **`position` is classification order, not finishing status.** There is no status column, so a driver who retired on lap 1 still carries a classification number. The metric is therefore *average classified position*, never "average finish", and DNF rate is not computed.
-2. **Season tables rank by wins, not points.** They are not championship standings, and every screen that shows one says so.
+1. **`position` is classification order, not finishing status.** A driver who retired on lap 1 still carries a classification number, so the metric is *average classified position*, never "average finish". Retirements are identifiable via `status` / `classification`, and DNF rate is computed and reported alongside it.
+2. **Season *tables* rank by wins; season *standings* are the real championship.** They are two different things on purpose. The stat tables sort by wins and say so. `/seasons/{season}/standings` is race points plus sprint points, verified against the official result — champion and exact total — for all 26 seasons.
 
 The Car Library page ships as an honest empty shell: no car data exists in the
 source, so it documents the schema real data would populate instead of inventing
@@ -49,10 +65,18 @@ chassis or power figures.
 
 ```
 f1_fetch.py            one-off acquisition, the only script that uses the network
+backend/etl/jolpica.py     ↓
+backend/etl/practice.py    ↓  (also network; also one-off)
      ↓
-results.csv            committed to the repo; the single source of truth
+results.csv            committed; the spine — one row per classification
+data/jolpica_*.csv     committed; points, grid, status, qualifying, sprints,
+                       pit stops, lap timings, sessions, entity detail
+data/fastf1_*.csv      committed; practice laps, compounds, sectors
      ↓
-backend/etl/build.py   validate → normalise → load; aborts on any fatal finding
+backend/etl/build.py   validate → normalise → load; aborts on any fatal finding.
+                       The jolpica/fastf1 extracts are OPTIONAL inputs: a clone
+                       missing one still builds, which is why the audit asserts
+                       coverage floors rather than trusting their presence
      ↓
 data/f1.db             SQLite build artefact, gitignored, rebuilt in ~1s
      ↓
@@ -62,12 +86,21 @@ FastAPI                opens the DB read-only; all calculation lives in
 React + TypeScript     presentation and formatting only; derives no metric
 ```
 
-**SQLite is the production data store.** A PostgreSQL/Supabase materialisation
-of the same CSV exists and is documented in [docs/database.md](docs/database.md),
-but **no router calls it** — it is not on any request path, its 24 tests skip
-without credentials, and it is not re-verifiable from this repository. See
-`backend/app/supabase_repo.py` for its status. Nothing in the setup below
-requires it.
+**Two stores, one dataset.** The same CSV is materialised as `data/f1.db`
+(SQLite) and as a hosted Postgres project (Supabase). `F1_BACKEND` selects
+which one answers, per request, and **28 of 30 routes dispatch through it** —
+`test_api_payload_parity.py` compares 77 request paths across both stores,
+response for response.
+
+This paragraph used to say "**no router calls it** — it is not on any request
+path". That was true when written and stopped being true without the sentence
+changing, which is the failure this project keeps having.
+
+SQLite remains the default, and is the only leg with no external dependency: a
+fresh clone builds and serves without credentials. Nothing in the setup below
+requires Supabase. The 24 tests that exercise it skip when
+`SUPABASE_URL` / `SUPABASE_ANON_KEY` are unset, and a skip is missing coverage
+rather than a pass. Schema and migrations: [docs/database.md](docs/database.md).
 
 ---
 
@@ -89,7 +122,8 @@ Runtime frontend dependencies: `react`, `react-dom`, `react-router-dom`.
 
 ## Setup
 
-Requires Python 3.11+ and Node 18+.
+Requires Python 3.11+ and Node 20.19+ (or 22.12+). The Node floor is Vite 8's,
+not this project's; CI pins 22.
 
 ```bash
 # 1. Build the database from source (idempotent, ~1s)
@@ -114,8 +148,8 @@ API calls and no network dependency — the pipeline reads one CSV in the repo.
 ## Tests
 
 ```bash
-python -m pytest backend/tests -q      # 109 passed, 24 skipped
-cd frontend && npm test                # 37 passed
+python -m pytest backend/tests -q      # 393 passed, 1 skipped (with Supabase credentials)
+cd frontend && npm test                # 59 passed
 cd frontend && npm run typecheck       # tsc --noEmit
 cd frontend && npm run build           # production bundle into frontend/dist
 ```
@@ -127,7 +161,9 @@ cd frontend && npm run build           # production bundle into frontend/dist
 | `test_api.py` | Contract: 422s, 404s, empty results, pagination, wildcard escaping |
 | `test_advanced.py` | Teammate/distribution/dominance formulas, hand-computed in the fixture comments |
 | frontend | Null-vs-zero formatting, states, sorting, error handling |
-| `test_supabase.py` | **24 cases, all skipped without credentials.** They test the unwired PostgreSQL path, so a green run says nothing about it |
+| `test_supabase.py` | Schema, RLS and the public-key boundary on the hosted project. Skips without credentials — a skip is missing coverage, not a pass |
+| `test_api_payload_parity.py` | **77 request paths, both backends, response for response.** The suite that has to be green before "the Supabase leg works" means anything |
+| `test_store_parity.py` / `test_backend_parity.py` | The two databases hold the same rows; the two implementations compute the same numbers |
 
 Analytics tests run against a fixture, not the real database — asserting a
 formula is correct requires numbers verifiable by hand.
@@ -170,6 +206,28 @@ the build fails on any unmapped race name rather than dropping a race silently.
 24 of 39 circuits ship a track-map SVG; the other 15 render a map-unavailable
 state.
 
+### Data sources and attribution
+
+Two independent providers. They are never blended: each has its own tables, its
+own coverage window, and its own verification level in the audit, because a
+reader comparing two numbers needs to know when they came from different places.
+
+| Source | Provides | Coverage | Licence / terms |
+|---|---|---|---|
+| [**Jolpica-F1**](https://github.com/jolpica/jolpica-f1) — the maintained successor to the retired Ergast API | Race results, championship points, finishing status, grid, qualifying, sprints, pit stops, lap timings, fastest-lap awards | 2000–2025 | Open API, Ergast lineage. Rate limited to 500 requests/hour |
+| [**FastF1**](https://github.com/theOehrly/Fast-F1) — reads Formula 1's live-timing service | Practice-session laps, tyre compounds, sector times, speed traps | 2018–2025 | MIT-licensed library; timing data © Formula 1 |
+
+**Attribution.** Race data originates from the Ergast Developer API lineage,
+now maintained as Jolpica-F1. Practice timing is retrieved through FastF1, which
+reads Formula One's official live-timing feed; that data remains the property of
+Formula 1. This project is unofficial and is not associated with, endorsed by,
+or affiliated with Formula 1, the FIA, or any team.
+
+`data/fastf1_practice_laps.csv` is committed so the build is reproducible
+offline. It is a derived extract — lap times, sectors and compounds — not a
+redistribution of the upstream feed, and it can be regenerated from scratch with
+`python -m backend.etl.practice`.
+
 ### Verification
 
 Spot-checked against known F1 history:
@@ -181,6 +239,39 @@ Spot-checked against known F1 history:
 | Most wins in a season | Max Verstappen, 19 (2023) | ✓ |
 | Most wins at one circuit | Lewis Hamilton, 9 (Silverstone) | ✓ |
 | 2021 top two | Verstappen 10, Hamilton 8 | ✓ |
+
+Spot checks are not verification, though, and are not relied on as such.
+`python -m backend.etl.crossvalidate` checks the dataset against Jolpica-F1
+race by race — three requests per season, cached on disk (the session timetable rides along
+in a response already being fetched, so it costs nothing extra):
+
+| Checked | Scope | Result |
+|---|---|---|
+| Winner, winning constructor, date, race name | 503 races | 0 discrepancies |
+| Qualifying P1 | 459 poles (the source itself is partial before 2003) | 0 discrepancies |
+| Weekend session timetable | 1,596 sessions, date and start time | 0 discrepancies |
+| Circuit identity | 39 circuits, as a 1:1 mapping | 0 discrepancies |
+
+Circuits are checked as a **bijection**, not by name, because names
+legitimately differ between sources ("Albert Park Circuit" vs "Albert Park
+Grand Prix Circuit") without being a disagreement about where the race was
+held. What must hold is that each source circuit maps to exactly one local
+circuit and back — which is the failure `circuit_map.csv` can actually
+produce, and is invisible to a name comparison. The check found the one real
+split on its first run: Jolpica files the 2020 Sakhir GP under the same
+circuit as the Bahrain GP, while this project separates the Outer Circuit
+(3.543 km) from the full track (5.412 km). The local split is the more precise
+model and is kept, recorded as a named exception rather than flattened.
+
+What this proves and does not: Jolpica is independent of this project's
+**pipeline**, not of its **provider**. A clean run means fetching, folding,
+joining, mapping and storing did not corrupt anything between source and
+database. It is not independent confirmation of Formula 1's own record.
+
+The build is also **deterministic**, not merely repeatable — two builds in two
+processes produce byte-identical table content, so surrogate ids and therefore
+every `/drivers/{id}` URL survive a rebuild. Enforced by
+`backend/tests/test_reproducibility.py`.
 
 ---
 
@@ -209,26 +300,83 @@ previous page under a dozen back-button steps while the URL stays shareable.
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Layers, the calculation-locality rule, extension points |
 | [DATA_DICTIONARY.md](DATA_DICTIONARY.md) | Every column, table and derived field |
 | [API.md](API.md) | Endpoints, parameters, error contract |
-| [docs/database.md](docs/database.md) | PostgreSQL/Supabase schema and migrations — **built, not wired in**: the running app serves from SQLite |
+| [docs/database.md](docs/database.md) | PostgreSQL/Supabase schema and migrations |
+| [docs/frontend-data-contract.md](docs/frontend-data-contract.md) | Page → data → source → transformation → UI, and which store answers what |
+| [docs/qa-matrix.md](docs/qa-matrix.md) | What was tested in the integration phase, and what was not |
+| [docs/OPERATIONS.md](docs/OPERATIONS.md) | Recovery, migration safety, the access model, deployment and monitoring |
 
 ---
 
 ## Known limitations
 
 - Coverage begins in 2000 — no figure here is an all-time Formula 1 record
-- No finishing status, so reliability and DNF metrics are impossible
+- Telemetry and car specifications are absent from every source this project ingests; the `cars` table exists and is deliberately empty
+- Pole position is not recorded as such. Qualifying P1 is counted and labelled `qualifying_p1`: the two diverge in the sprint era
 - Season lengths vary 16–24 races; cross-era season totals are not normalised
 - The 2002 French GP carries 20 rows but runs to P22 — an upstream omission, reported by the validator rather than patched
 - `circuit_map.csv` encodes external knowledge, not source data; it should be reviewed when a season is added
 - Data is static. Nothing is live, and no screen implies an in-progress race
-- The PostgreSQL/Supabase schema in `docs/database.md` cannot be rebuilt from this repository: no migration files are checked in, and its tests skip without credentials
+- Driver portraits, car photos and team logos are third-party images and the repository records no source or licence for any of them. Every one has a graceful labelled fallback, so they can be removed without breaking a layout — see [docs/CAR_PHOTOS.md](docs/CAR_PHOTOS.md)
+- There is no monitoring, error reporting or alerting. If the deployed app breaks, nothing tells anyone — see [docs/OPERATIONS.md](docs/OPERATIONS.md) §6
+- Constructor standings apply two documented FIA championship penalties (McLaren 2007, Racing Point 2020) that cannot be reached by summing race results — see [METHODOLOGY.md](METHODOLOGY.md) §6.1
+- The Supabase leg needs credentials: without them its tests skip and parity is unverified rather than verified-good. The 24 migrations are checked in and `python supabase/verify_migrations.py` checks each file against the SQL the database recorded as applied
 
 ## Roadmap
 
-Ordered by how much each unlocks:
+Items 1–3 of the original roadmap — qualifying and grid, finishing status, and
+points — have been **delivered**, and lap timings with them. What is left:
 
-1. **Qualifying + grid** → pole rate, grid-vs-finish delta, race-craft metrics
-2. **Finishing status** → DNF rate, finish rate, reliability — the single largest current gap
-3. **Points** → real championship standings, points-per-race
-4. **Car metadata** → the Car Library page is already built against its absence
-5. Lap times and telemetry — a different scale of data and out of scope until the above exist
+1. **Car metadata** → the Car Library page is already built against its absence, and stays an empty shell until a source exists
+2. **Telemetry** → a different scale of data, and out of scope
+3. **Observability** → the deployed app currently reports nothing when it breaks; see [docs/OPERATIONS.md](docs/OPERATIONS.md) § 6
+
+Anything added here needs a source first. Nothing on this list will be
+estimated to make a page look finished.
+
+---
+
+## Ownership and licence
+
+**Copyright © 2026 malek-pixel. All rights reserved.**
+**This project is proprietary. It is not open source.**
+
+This repository is public so the work can be read, reviewed and assessed. That
+is not the same as a grant of rights: a public repository is not public domain,
+and the absence of an open-source licence means permissions are withheld, not
+that none apply. Full terms are in [LICENSE](LICENSE).
+
+In short:
+
+| | |
+|---|---|
+| **Read it, learn from it, cite it** | Yes, no permission needed |
+| **Fork or clone via GitHub** | Yes — GitHub's Terms of Service permit this for any public repo |
+| **Quote short excerpts with attribution** | Yes |
+| **Reuse the code in your own project** | **Ask first** — open an issue |
+| **Redistribute it, or build a product on it** | **Ask first** |
+
+Contributions are not accepted; data corrections as issues are welcome. See
+[CONTRIBUTING.md](CONTRIBUTING.md). Security reports go through
+[SECURITY.md](SECURITY.md), not public issues.
+
+### What is mine, and what is not
+
+The reservation of rights covers **my original work**: the ETL pipeline, the
+FastAPI backend and its analytics, the React frontend, the database migrations,
+the test suites, and the written documentation.
+
+It does **not** cover the following, which are third-party and carry their own
+terms:
+
+| Not mine to licence | Status |
+|---|---|
+| **Race and timing data** — `results.csv`, `data/jolpica_*.csv`, `data/fastf1_*.csv` | From the Jolpica-F1 / Ergast lineage and, via FastF1, Formula One's live-timing feed. Timing data remains the property of Formula 1. The committed CSVs are derived extracts, regenerable from source |
+| **Driver portraits** — `frontend/public/drivers` (129) | Third-party. **This repository records no source or licence for any of them.** Every image has a labelled fallback — verified: the application renders completely with all images removed |
+| **Car photographs** — `frontend/public/cars` (266) | As above. `docs/CAR_PHOTOS.md` notes that a public deployment needs a licensed source |
+| **Team logos** — `frontend/public/teams` (35) | Registered trademarks of the teams concerned. Trademark is not something a copyright licence can grant |
+| **The Formula 1 mark** — `frontend/public/f1-logo.png` | Registered trademark of Formula One Licensing BV. Used as a reference to the sport, not a claim of association |
+| **Circuit outlines** — 25 SVGs, duplicated in `frontend/public/circuits`, `design/assets/circuits` and `Assets F1/` | Third-party, provenance unrecorded |
+| **Dependencies** — `requirements.txt`, `frontend/package.json` | Each under its own open-source licence |
+
+This project is unofficial and is not associated with, endorsed by, or
+affiliated with Formula 1, the FIA, or any Formula 1 team.

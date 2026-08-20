@@ -6,9 +6,37 @@ __pycache__/
 # so it is not tracked. Run: python -m backend.etl.build
 data/f1.db
 
-# Secrets. .env.example is tracked and holds placeholders only.
+# Raw API responses from Jolpica-F1. A cache, not a source: the committed
+# artefacts are data/jolpica_results.csv and data/jolpica_sprints.csv, which
+# are checksummed and rebuilt from this. Delete to force a refetch.
+data/cache/
+
+# Secrets.
+#
+# The catch-all matters more than the two named files: the ones that get
+# committed by accident are always the variant nobody thought to list --
+# .env.production, .env.supabase, .env.bak. Ignore every variant, then allow
+# the one file that is meant to be tracked and holds placeholders only.
 .env
-.env.local
+.env.*
+!.env.example
+
+# Credential material, by extension. None of these exist in this project
+# today; the point is that if one ever does, it is ignored before it is
+# noticed rather than after.
+*.pem
+*.key
+*.p12
+*.pfx
+credentials.json
+service-account*.json
+
+# Logs and local virtualenvs.
+*.log
+.venv/
+venv/
+htmlcov/
+.coverage
 
 node_modules/
 dist/

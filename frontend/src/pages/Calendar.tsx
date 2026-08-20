@@ -1,4 +1,5 @@
 import { useState } from "react";
+import type { ReactNode } from "react";
 import { Link, useParams } from "react-router-dom";
 import { DataTable } from "../components/DataTable";
 import { Async } from "../components/States";
@@ -14,16 +15,19 @@ import {
   PendingCell,
   PendingValue,
   Segmented,
+  UnknownCell,
 } from "../components/ui";
 import { useApi, useDebounced } from "../hooks/useApi";
 import { count, useDataset } from "../hooks/useDataset";
 import { qs } from "../services/api";
+import { seriesColour } from "../charts/palette";
 import type {
   Race,
   RaceDetail as RaceDetailType,
   SeasonIndexRow,
   SeasonRounds,
   SeasonSummary,
+  Standings,
 } from "../types";
 
 interface Dominance {
@@ -36,12 +40,19 @@ interface Dominance {
   basis: string;
 }
 
-/** Repeated wherever a wins-based table appears. These are not standings. */
+/**
+ * Repeated wherever a WINS-ordered table appears.
+ *
+ * This used to say championship order could not be reproduced, because no
+ * points column existed. It does now, and the standings on the season page
+ * reproduce the official order exactly -- so the note explains what this
+ * particular table is ordered by, instead of denying the championship exists.
+ */
 function RankingBasisNote() {
   return (
     <p className="note-line">
-      <Badge tone="warning">Not championship standings</Badge> Ranked by wins, then podiums, then average
-      classified position. The dataset has no points column, so official championship order cannot be reproduced.
+      <Badge tone="info">Ordered by wins</Badge> Ranked by wins, then podiums, then average classified
+      position. For the points championship, see the standings on the season page.
     </p>
   );
 }
@@ -108,9 +119,18 @@ export function SeasonIndex() {
                   { key: "constructors", header: "Constructors", numeric: true, render: (r) => num(r.constructors) },
                   { key: "entries", header: "Classifications", numeric: true, render: (r) => num(r.entries) },
                   {
+                    // Points are ingested and standings are served for every
+                    // season, so this column is a fetch cost, not a data
+                    // limit. Filling it here would mean one
+                    // standings request per row, so the season page carries
+                    // the leader instead and this says where to find it.
                     key: "wdc",
                     header: "WDC",
-                    render: () => <PendingValue title="Champions require a points column; results.csv has none" />,
+                    render: (r) => (
+                      <Link to={`/seasons/${r.season}`} className="mono">
+                        See season →
+                      </Link>
+                    ),
                   },
                 ]}
               />
@@ -122,12 +142,47 @@ export function SeasonIndex() {
   );
 }
 
+/**
+ * Pick the right cell for a standings figure: loading, failed, genuinely
+ * absent, or present.
+ *
+ * These two cells used to test `standings.data?.[...]` alone, which collapses
+ * four states into two. A failed request has no data, so it fell into the same
+ * branch as a season the source has no standings for -- and the page told the
+ * reader "No standings recorded for this season" about 2022, 2024 and 2025.
+ * That is a false claim about the data, produced by an error the reader had
+ * already been shown elsewhere on the page. Retry made it worse rather than
+ * better: it refetched the section that owns the button and left these cells
+ * asserting an absence that had never been true.
+ *
+ * The order below is the fix. Absence is only claimed once the request has
+ * actually succeeded and come back without a leader.
+ */
+function standingsCell<T>(
+  label: string,
+  state: { loading: boolean; error: unknown },
+  value: T | undefined,
+  render: (value: T) => ReactNode,
+): ReactNode {
+  if (value !== undefined) return render(value);
+  if (state.loading) return <UnknownCell label={label} why="Loading standings…" />;
+  if (state.error)
+    return (
+      <UnknownCell
+        label={label}
+        why="Standings could not be loaded. The season's standings exist — this is a loading failure, not missing data."
+      />
+    );
+  return <PendingCell label={label} why="No standings recorded for this season" />;
+}
+
 export function SeasonDetail() {
   const { season } = useParams();
   const [tab, setTab] = useState<"drivers" | "constructors">("drivers");
   const state = useApi<SeasonSummary>(`/seasons/${season}`);
   const dominance = useApi<Dominance>(`/seasons/${season}/dominance`);
   const rounds = useApi<SeasonRounds>(`/seasons/${season}/rounds`);
+  const standings = useApi<Standings>(`/seasons/${season}/standings`);
 
   return (
     <Async state={state} loadingRows={6}>
@@ -167,8 +222,49 @@ export function SeasonDetail() {
                   value={num(summary.entries)}
                   note="One row per driver per race"
                 />
-                <PendingCell label="WDC WINNER" why="Champions require a points column; the source has none" />
-                <PendingCell label="WCC WINNER" why="Champions require a points column; the source has none" />
+                {/* These two read "Champions require a points column; the
+                    source has none" long after points were ingested -- while
+                    the home page displayed the very same championship leader
+                    from the very same endpoint. Points are on all 10,550
+                    results and standings are served for every season.
+
+                    Labelled LEADER, not CHAMPION: ties are broken here by
+                    wins then podiums, and the official countback rule is not
+                    implemented, so this is the points leader rather than an
+                    adjudicated title. */}
+                {standingsCell("WDC · POINTS LEADER", standings, standings.data?.drivers?.[0], (leader) => (
+                  <Cell
+                    label="WDC · POINTS LEADER"
+                    value={leader.name}
+                    note={`${num(leader.points)} pts · ties not adjudicated by countback`}
+                  />
+                ))}
+                {standingsCell(
+                  "WCC · POINTS LEADER",
+                  standings,
+                  standings.data?.constructors?.length ? standings.data.constructors : undefined,
+                  (table) => (
+                    <Cell
+                      label="WCC · POINTS LEADER"
+                      value={table[0].name}
+                      /* A season carrying a championship penalty says so here.
+                         Without it, 2007 reads as "Ferrari, 204" with no sign
+                         that McLaren scored 218 and were excluded -- which is
+                         the one thing a reader who knows that season will look
+                         for, and its absence makes the number look wrong rather
+                         than penalised. */
+                      note={(() => {
+                        const lead = table[0];
+                        const penalised = table.find((row) => row.penalty);
+                        const base = `${num(lead.points)} pts · ties not adjudicated by countback`;
+                        if (!penalised) return base;
+                        return penalised.penalty!.excluded
+                          ? `${num(lead.points)} pts · ${penalised.name} excluded (scored ${num(penalised.penalty!.points_scored)})`
+                          : `${num(lead.points)} pts · ${penalised.name} −${num(penalised.penalty!.points_deducted)} penalty`;
+                      })()}
+                    />
+                  ),
+                )}
               </CellGrid>
             </Panel>
 
@@ -221,20 +317,7 @@ export function SeasonDetail() {
                     }
                   }
                   const order = [...tally.entries()].sort((a, b) => b[1] - a[1]).map(([name]) => name);
-                  const palette = [
-                    "#E10600",
-                    "#0090FF",
-                    "#F59E0B",
-                    "#22C55E",
-                    "#A855F7",
-                    "#14B8A6",
-                    "#EC4899",
-                    "#94A3B8",
-                  ];
-                  const colour = (name: string | null) =>
-                    name && order.indexOf(name) >= 0
-                      ? palette[order.indexOf(name) % palette.length]
-                      : "var(--border)";
+                  const colour = (name: string | null) => seriesColour(name, order);
                   return (
                     <>
                       <PaneHead
@@ -319,7 +402,7 @@ export function SeasonDetail() {
                     key: "pts",
                     header: "Pts",
                     numeric: true,
-                    render: () => <PendingValue title="No points column in results.csv" />,
+                    render: (r) => dec(r.points),
                   },
                 ]}
               />
@@ -337,7 +420,7 @@ export function SeasonDetail() {
                   {
                     key: "circuit",
                     header: "Circuit",
-                    render: (r) => <Link to={`/circuits/${r.circuit_id}`}>{r.circuit_name}</Link>,
+                    render: (r) => <Link to={`/circuits/${r.circuit_slug}`}>{r.circuit_name}</Link>,
                   },
                   { key: "date", header: "Date", render: (r) => <span className="mono">{formatDate(r.date)}</span> },
                   {
@@ -345,7 +428,7 @@ export function SeasonDetail() {
                     header: "Winner",
                     render: (r) =>
                       r.winner_driver ? (
-                        <Link to={`/drivers/${r.winner_driver_id}`}>{r.winner_driver}</Link>
+                        <Link to={`/drivers/${r.winner_driver_slug}`}>{r.winner_driver}</Link>
                       ) : (
                         <PendingValue title="No recorded winner for this race" />
                       ),
@@ -497,15 +580,28 @@ export function RaceIndex() {
                   {
                     key: "name",
                     header: "Race · circuit",
+                    /* Mockup § 06 puts the track outline in the row itself.
+                       Circuits without an SVG simply render no thumbnail. */
                     render: (r) => (
-                      <>
-                        <Link to={`/races/${r.id}`} style={{ fontWeight: 500 }}>
-                          {r.name}
-                        </Link>
-                        <div className="mono" style={{ fontSize: 11, color: "var(--text-faint)" }}>
-                          {r.season} · {r.circuit_name}
-                        </div>
-                      </>
+                      <span className="race-row">
+                        <img
+                          className="race-row__map"
+                          src={`/circuits/${r.circuit_slug}.svg`}
+                          alt=""
+                          loading="lazy"
+                          onError={(event) => {
+                            event.currentTarget.style.visibility = "hidden";
+                          }}
+                        />
+                        <span style={{ minWidth: 0 }}>
+                          <Link to={`/races/${r.id}`} style={{ fontWeight: 500 }}>
+                            {r.name}
+                          </Link>
+                          <span className="mono race-row__sub">
+                            {r.season} · {r.circuit_name}
+                          </span>
+                        </span>
+                      </span>
                     ),
                   },
                   { key: "date", header: "Date", render: (r) => <span className="mono">{formatDate(r.date)}</span> },
@@ -514,7 +610,7 @@ export function RaceIndex() {
                     header: "Winner",
                     render: (r) =>
                       r.winner_driver ? (
-                        <Link to={`/drivers/${r.winner_driver_id}`}>{r.winner_driver}</Link>
+                        <Link to={`/drivers/${r.winner_driver_slug}`}>{r.winner_driver}</Link>
                       ) : (
                         <PendingValue title="No recorded winner for this race" />
                       ),
@@ -524,20 +620,44 @@ export function RaceIndex() {
                     header: "Constr.",
                     render: (r) =>
                       r.winner_constructor ? (
-                        <Link to={`/constructors/${r.winner_constructor_id}`}>{r.winner_constructor}</Link>
+                        <Link to={`/constructors/${r.winner_constructor_slug}`}>{r.winner_constructor}</Link>
                       ) : (
                         <PendingValue />
                       ),
                   },
-                  /* The mockup's POLE, GRID, GAP and STATUS columns. None of
-                     the four is in the seven source columns. */
-                  { key: "pole", header: "Pole", render: () => <PendingValue title="No qualifying data in the source" /> },
-                  { key: "grid", header: "Grid", render: () => <PendingValue title="No grid column in the source" /> },
+                  /* Three of these four rendered "not in the source" long
+                     after qualifying, grid and finishing status had been
+                     ingested. Only the gap is genuinely absent. */
+                  {
+                    key: "qual",
+                    // "Qual P1", not "Pole": the two differ in the sprint era,
+                    // and this counts whoever qualified fastest.
+                    header: "Qual P1",
+                    render: (r) =>
+                      r.qualifying_first_slug ? (
+                        <Link to={`/drivers/${r.qualifying_first_slug}`}>{r.qualifying_first}</Link>
+                      ) : (
+                        <PendingValue title="No qualifying recorded for this race" />
+                      ),
+                  },
+                  {
+                    key: "grid",
+                    header: "Grid",
+                    numeric: true,
+                    render: (r) =>
+                      r.winner_grid === null ? (
+                        <PendingValue title="No grid recorded for this race" />
+                      ) : r.winner_grid === 0 ? (
+                        "PIT"
+                      ) : (
+                        <span className="mono">{r.winner_grid}</span>
+                      ),
+                  },
                   { key: "gap", header: "Gap", render: () => <PendingValue title="No race or gap times in the source" /> },
                   {
                     key: "status",
                     header: "Status",
-                    render: () => <PendingValue title="No finishing-status column in the source" />,
+                    render: (r) => r.winner_status ?? <PendingValue title="No status recorded" />,
                   },
                 ]}
               />
@@ -573,7 +693,7 @@ export function RaceDetail() {
                   {race.season} {race.name}
                 </h1>
                 <div className="entity-head__sub">
-                  <Link to={`/circuits/${race.circuit_id}`}>{race.circuit_name}</Link> ·{" "}
+                  <Link to={`/circuits/${race.circuit_slug}`}>{race.circuit_name}</Link> ·{" "}
                   <Link to={`/seasons/${race.season}`}>{race.season} season</Link>
                 </div>
               </div>
@@ -587,8 +707,16 @@ export function RaceDetail() {
                 note={race.results[0]?.constructor_name}
               />
               <PendingCell label="DISTANCE" why="No race-distance column in the source" />
-              <PendingCell label="LAPS" why="No lap-count column in the source" />
-              <PendingCell label="STARTERS" why="No status column: non-starters cannot be told apart" />
+              <Cell
+                label="LAPS"
+                value={num(race.results[0]?.laps ?? null)}
+                note="Completed by the winner"
+              />
+              <Cell
+                label="CLASSIFIED"
+                value={`${race.results.filter((r) => r.classification === "classified").length} of ${race.results.length}`}
+                note="Reached a classified finish"
+              />
             </CellGrid>
           </Panel>
 
@@ -600,7 +728,7 @@ export function RaceDetail() {
                   {race.results.slice(0, 3).map((entry) => (
                     <li key={entry.driver_id}>
                       <span className="podium__pos mono">P{entry.position}</span>
-                      <Link to={`/drivers/${entry.driver_id}`} className="podium__driver">
+                      <Link to={`/drivers/${entry.driver_slug}`} className="podium__driver">
                         {entry.driver_name}
                       </Link>
                       <span className="podium__team">{entry.constructor_name}</span>
@@ -613,21 +741,150 @@ export function RaceDetail() {
               </div>
             </div>
             <div className="split__pane">
-              <PaneHead title="Not recorded for this race" meta="WOULD NEED NEW SOURCE COLUMNS" />
+              <PaneHead title="Race summary" meta="COUNTED FROM THE CLASSIFICATION" />
               <CellGrid cols={2}>
-                <PendingCell label="POLE POSITION" why="No qualifying data in the source" />
-                <PendingCell label="FASTEST LAP" why="No fastest-lap column in the source" />
-                <PendingCell label="POINTS AWARDED" why="No points column in the source" />
-                <PendingCell label="RETIREMENTS" why="No finishing-status column; retirements are ranked, not flagged" />
+                <Cell
+                  label="POINTS AWARDED"
+                  value={dec(race.results.reduce((sum, r) => sum + (r.points ?? 0), 0))}
+                  note="Race only; sprint points are listed separately"
+                />
+                <Cell
+                  label="RETIREMENTS"
+                  value={num(race.results.filter((r) => r.classification && r.classification !== "classified").length)}
+                  note="Did not reach a classified finish"
+                />
+                {race.fastest_lap.available && race.fastest_lap.item ? (
+                  <Cell
+                    label="QUICKEST LAP"
+                    value={race.fastest_lap.item.time_text}
+                    /* Labelled "quickest lap", not "fastest lap": this is the
+                       minimum recorded time, not the official award, which no
+                       source publishes and which has eligibility rules. */
+                    note={`${race.fastest_lap.item.driver_name} · lap ${race.fastest_lap.item.lap}`}
+                  />
+                ) : (
+                  <PendingCell label="QUICKEST LAP" why={race.fastest_lap.unavailable_reason ?? "No lap timings for this race"} />
+                )}
+                {race.fastest_lap_award.available && race.fastest_lap_award.item ? (
+                  <Cell
+                    label="FASTEST LAP (AWARD)"
+                    value={race.fastest_lap_award.item.time_text ?? "—"}
+                    /* Distinct from QUICKEST LAP above. The award applies
+                       eligibility rules -- a classified finish, and since 2019
+                       a top-ten position for the point -- so the two can name
+                       different drivers. Showing where they finished makes
+                       that visible: at Bahrain 2023 Zhou set it and came
+                       sixteenth, scoring nothing. */
+                    note={`${race.fastest_lap_award.item.driver_name} · finished P${race.fastest_lap_award.item.finish_position}`}
+                  />
+                ) : (
+                  <PendingCell
+                    label="FASTEST LAP (AWARD)"
+                    why={race.fastest_lap_award.unavailable_reason ?? "Not recorded for this race"}
+                  />
+                )}
+                {/* Race tyre strategy specifically: compounds are published
+                    for practice from 2018 but not for race laps, so this says
+                    which half is missing rather than claiming both. */}
+                <PendingCell
+                  label="RACE TYRE STRATEGY"
+                  why="Compounds are not published for race laps. Practice compounds exist from 2018."
+                />
               </CellGrid>
             </div>
           </div>
 
           <p className="note-line">
             <Badge tone="warning">Classification order</Badge> Positions are the final classification, which
-            includes retirements. The source has no status column, so a retirement cannot be distinguished from a
-            finish.
+            includes retirements — a car that stopped on lap 1 still holds a position. The `status` column
+            says which is which, so a retirement is distinguishable from a finish.
           </p>
+
+          {/* Practice, from a DIFFERENT SOURCE to everything else on this
+              page. Labelled as such: a practice time and a race time are not
+              comparable, and a reader should not have to infer where each
+              number came from. */}
+          <Panel>
+            <PaneHead
+              title="Practice"
+              meta={
+                race.practice.available
+                  ? `${Object.keys(race.practice.sessions).length} SESSIONS · ${race.practice.source}`
+                  : "NOT AVAILABLE"
+              }
+            />
+            {race.practice.available ? (
+              <div className="panel--pad">
+                {Object.entries(race.practice.sessions).map(([code, rows]) => (
+                  <div key={code} style={{ marginBottom: 20 }}>
+                    <h4 className="mono" style={{ marginBottom: 8, textTransform: "uppercase" }}>
+                      {code}
+                    </h4>
+                    <DataTable
+                      caption={`${race.season} ${race.name} ${code.toUpperCase()} classification`}
+                      rows={rows.slice(0, 10)}
+                      rowKey={(row) => row.driver_id}
+                      columns={[
+                        {
+                          key: "pos",
+                          header: "Pos",
+                          numeric: true,
+                          // Null for a driver who ran but set no valid time.
+                          // They are unranked, which is not the same as last.
+                          render: (r) =>
+                            r.position === null ? (
+                              <span title="Ran but set no valid time">—</span>
+                            ) : (
+                              <span className="mono">{r.position}</span>
+                            ),
+                        },
+                        {
+                          key: "driver",
+                          header: "Driver",
+                          render: (r) => <Link to={`/drivers/${r.driver_slug}`}>{r.driver_name}</Link>,
+                        },
+                        {
+                          key: "best",
+                          header: "Best lap",
+                          numeric: true,
+                          render: (r) =>
+                            r.best_lap === null ? "—" : <span className="mono">{r.best_lap.toFixed(3)}</span>,
+                        },
+                        {
+                          key: "gap",
+                          header: "Gap",
+                          numeric: true,
+                          render: (r) =>
+                            r.gap_to_leader === null || r.gap_to_leader === 0
+                              ? "—"
+                              : <span className="mono">+{r.gap_to_leader.toFixed(3)}</span>,
+                        },
+                        { key: "laps", header: "Laps", numeric: true, render: (r) => r.laps },
+                        {
+                          key: "deleted",
+                          header: "Deleted",
+                          numeric: true,
+                          // Deleted laps are excluded from the ranking but
+                          // shown, because a driver losing their best time to
+                          // track limits is part of what happened.
+                          render: (r) => (r.deleted_laps ? r.deleted_laps : "—"),
+                        },
+                      ]}
+                    />
+                  </div>
+                ))}
+                <div className="kpi__note">
+                  Each driver's best lap that <strong>stood</strong>. Deleted laps are excluded from the
+                  order but counted here. Times come from {race.practice.source}, not from the source
+                  behind the race classification — do not compare them directly.
+                </div>
+              </div>
+            ) : (
+              <div className="panel--pad">
+                <div className="kpi__note">{race.practice.unavailable_reason}</div>
+              </div>
+            )}
+          </Panel>
 
           <Panel>
             <PaneHead title="Classification" meta={`${race.results.length} ROWS`} />
@@ -652,12 +909,12 @@ export function RaceDetail() {
                 {
                   key: "driver",
                   header: "Driver",
-                  render: (r) => <Link to={`/drivers/${r.driver_id}`}>{r.driver_name}</Link>,
+                  render: (r) => <Link to={`/drivers/${r.driver_slug}`}>{r.driver_name}</Link>,
                 },
                 {
                   key: "team",
                   header: "Constructor",
-                  render: (r) => <Link to={`/constructors/${r.constructor_id}`}>{r.constructor_name}</Link>,
+                  render: (r) => <Link to={`/constructors/${r.constructor_slug}`}>{r.constructor_name}</Link>,
                 },
                 { key: "grid", header: "Grid", render: () => <PendingValue title="No grid column in the source" /> },
                 {
@@ -669,16 +926,49 @@ export function RaceDetail() {
                   key: "pts",
                   header: "Pts",
                   numeric: true,
-                  render: () => <PendingValue title="No points column in the source" />,
+                  render: (r) => dec(r.points),
                 },
                 {
                   key: "status",
                   header: "Status",
-                  render: () => <PendingValue title="No finishing-status column in the source" />,
+                  // Was a hardcoded pending cell citing a missing column. The
+                  // payload carries the source's own status text ("Finished",
+                  // "+1 Lap", "Gearbox") on every row; only rows the
+                  // enrichment has not reached are genuinely unknown.
+                  render: (r) =>
+                    r.status ? (
+                      <span>{r.status}</span>
+                    ) : (
+                      <PendingValue title="Enrichment has not been loaded for this race" />
+                    ),
                 },
               ]}
             />
           </Panel>
+
+          {/* Mockup § 06 closes the race page with a related-links strip. */}
+          <div className="related mono">
+            <span className="related__label">RELATED</span>
+            <Link to={`/seasons/${race.season}`}>{race.season} season →</Link>
+            <Link to={`/circuits/${race.circuit_slug}`}>{race.circuit_name} →</Link>
+            {race.results[0] && (
+              <>
+                <Link to={`/drivers/${race.results[0].driver_slug}`}>{race.results[0].driver_name} →</Link>
+                <Link to={`/constructors/${race.results[0].constructor_slug}`}>
+                  {race.results[0].constructor_name} →
+                </Link>
+              </>
+            )}
+            {/* This read "Qualifying, fastest-lap and pit-stop data are
+                outside this dataset" on a page that renders all three: the
+                qualifying block, the fastest-lap award and the pit-stop
+                table are directly above it. Coverage windows differ, so the
+                note states them instead of denying the data exists. */}
+            <span className="related__note">
+              Qualifying is complete from 2003, fastest laps from 2004 and pit stops from 2011.
+              Races before those seasons show the data as unavailable.
+            </span>
+          </div>
         </>
       )}
     </Async>

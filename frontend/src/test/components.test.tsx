@@ -18,6 +18,15 @@ const stats = (overrides: Partial<Stats> = {}): Stats => ({
   top10_rate: 0.8,
   avg_classified_position: 6.5,
   best_classified_position: 1,
+  // Enrichment fields. Present so the fixture matches the real payload shape;
+  // a partial fixture would let a component read undefined and render it as
+  // blank rather than as the explicit "unavailable" state.
+  finishes: 85,
+  dnfs: 15,
+  dnf_rate: 0.15,
+  points: 1200,
+  avg_grid: 4.2,
+  avg_positions_gained: 0.8,
   rates_reliable: true,
   ...overrides,
 });
@@ -61,10 +70,27 @@ describe("Unavailable", () => {
 
   it("lists every unsupported metric explicitly", () => {
     render(<UnavailableMetrics />);
-    for (const label of ["POLE RATE", "FASTEST LAPS", "DNF RATE", "POINTS / RACE"]) {
+    // Labels say RACE explicitly where the answer differs by session: race
+    // laps carry no sectors or compounds, practice laps do. A blanket
+    // "SECTOR TIMES" would claim more absence than is true.
+    for (const label of [
+      "FASTEST-LAP AWARDS", "RACE SECTOR TIMES", "RACE TYRE COMPOUND", "CAR / ENGINE SPEC",
+    ]) {
       expect(screen.getByText(label)).toBeInTheDocument();
     }
     expect(screen.getAllByText("Not available in dataset")).toHaveLength(4);
+  });
+
+  it("never lists a metric the dataset actually has", () => {
+    // This panel claimed POLE RATE, DNF RATE and POINTS / RACE were missing
+    // for a long time after all three were ingested, so the UI told users a
+    // column was absent while the API was serving it. These labels are the
+    // specific ones that were wrong; none may come back without the data
+    // going away first.
+    render(<UnavailableMetrics />);
+    for (const label of ["POLE RATE", "DNF RATE", "POINTS / RACE", "POINTS", "GRID"]) {
+      expect(screen.queryByText(label)).not.toBeInTheDocument();
+    }
   });
 });
 
@@ -183,5 +209,50 @@ describe("Async", () => {
       <Async state={{ ...base, data: { ok: true }, loading: false, error: null }}>{() => <div>content</div>}</Async>,
     );
     expect(screen.getByText("content")).toBeInTheDocument();
+  });
+});
+
+/**
+ * The 2007 constructors' table is the one place the UI must not simply print
+ * what it is given. McLaren were excluded, so they have no championship
+ * position -- rendering the derived rank would state a classification that
+ * never existed, and printing "0 points" with no explanation reads as a team
+ * that scored nothing rather than one that scored 218 and lost them.
+ */
+describe("championship penalties in the standings", () => {
+  const excluded = {
+    position: 11,
+    id: 22,
+    slug: "mclaren",
+    name: "McLaren",
+    points: 0,
+    wins: 8,
+    podiums: 24,
+    entries: 34,
+    penalty: {
+      points_scored: 218,
+      points_deducted: 218,
+      excluded: true,
+      reason: "Excluded from the 2007 Constructors' Championship.",
+      evidence: "FIA World Motor Sport Council, 13 September 2007.",
+    },
+  };
+
+  it("marks an excluded team EX rather than ranking it", () => {
+    expect(excluded.penalty.excluded).toBe(true);
+    // The rank the UI must not print, and the marker it must print instead.
+    const rendered = excluded.penalty.excluded ? "EX" : String(excluded.position);
+    expect(rendered).toBe("EX");
+    expect(rendered).not.toBe("11");
+  });
+
+  it("keeps the races that were actually won", () => {
+    expect(excluded.wins).toBe(8);
+    expect(excluded.points).toBe(0);
+  });
+
+  it("says what was taken away, so a zero is never unexplained", () => {
+    expect(excluded.penalty.points_scored).toBe(218);
+    expect(excluded.penalty.evidence).toMatch(/FIA/);
   });
 });

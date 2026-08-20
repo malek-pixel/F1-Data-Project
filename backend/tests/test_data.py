@@ -7,6 +7,7 @@ wrong number.
 from __future__ import annotations
 
 import csv
+from pathlib import Path
 
 import pytest
 
@@ -124,3 +125,113 @@ def test_database_is_read_only(conn):
 
     with pytest.raises(sqlite3.OperationalError):
         conn.execute("DELETE FROM results")
+
+
+def test_no_hardcoded_season_span_in_user_facing_strings():
+    """No string the API can emit may state the coverage window as a literal.
+
+    A span baked into a methodology string is correct only until the next
+    ingestion, after which it silently describes the wrong window -- worse than
+    stating no window at all. `analytics.coverage_span()` and
+    `analytics.qualifying_coverage_from()` read it from the data instead.
+
+    Scoped to strings that can REACH A USER, via the AST rather than a line
+    scan. Comments and docstrings are excluded deliberately: they document
+    findings, and a finding like "totals were short from 2021" is evidence
+    whose whole value is the specific year. Only runtime string values are
+    capable of shipping a stale claim to a client.
+    """
+    import ast
+    import re
+
+    app_dir = Path(__file__).resolve().parents[1] / "app"
+    span = re.compile(r"\b(19|20)\d{2}\s*-\s*(19|20)\d{2}\b")
+
+    offenders = []
+    for path in sorted(app_dir.rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+
+        # Collect docstring nodes so they can be skipped by identity.
+        docstrings = set()
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                body = getattr(node, "body", None)
+                if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant):
+                    if isinstance(body[0].value.value, str):
+                        docstrings.add(id(body[0].value))
+
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Constant) or not isinstance(node.value, str):
+                continue
+            if id(node) in docstrings:
+                continue
+            if span.search(node.value):
+                offenders.append(
+                    f"{path.relative_to(app_dir)}:{node.lineno}: {node.value.strip()[:80]}"
+                )
+
+    assert not offenders, (
+        "hardcoded season span in a user-facing string; derive it instead:\n"
+        + "\n".join(offenders)
+    )
+
+
+def test_coverage_span_matches_the_data(conn):
+    from backend.app import analytics
+
+    lo, hi = conn.execute("SELECT MIN(season), MAX(season) FROM races").fetchone()
+    assert analytics.coverage_span(conn) == f"{lo}-{hi}"
+
+
+# ---------------------------------------------------------------------------
+# Known upstream defects.
+#
+# These document faults in the SOURCE, not in the pipeline. They are pinned to
+# an exact set so the defect stays visible and cannot quietly grow: a test that
+# merely tolerated duplicates would hide the next one.
+# ---------------------------------------------------------------------------
+
+# Sessions where the source reports two drivers at the same qualifying
+# position. Verified against the cached source payload: Jolpica itself returns
+# position 15 twice for the 2023 British Grand Prix, with no position 20 in a
+# 20-row session. The rows are ingested exactly as published rather than
+# renumbered, because renumbering would invent an order the source does not
+# state.
+KNOWN_DUPLICATE_QUALIFYING_POSITIONS = {
+    (2023, 10, 15),
+    (2024, 8, 14),
+    (2024, 8, 15),
+    (2024, 15, 10),
+    (2024, 17, 15),
+    (2025, 7, 16),
+}
+
+
+def test_duplicate_qualifying_positions_match_the_known_upstream_set(conn):
+    """Pin the upstream defect: no new duplicate may appear unnoticed.
+
+    Found while building the cross-store parity suite, which reported a
+    difference between SQLite and Postgres that turned out to be neither
+    store's fault -- (season, round, position) simply is not unique in
+    qualifying, so the two databases broke a tie differently.
+
+    Failing here means either a new source defect, or one of these was fixed
+    upstream. Both are worth knowing about; neither should be discovered by a
+    reader noticing two drivers on the same grid slot.
+    """
+    found = {
+        (row["season"], row["round"], row["position"])
+        for row in conn.execute(
+            """
+            SELECT ra.season, ra.round, q.position
+            FROM qualifying_results q
+            JOIN races ra ON ra.id = q.race_id
+            GROUP BY q.race_id, q.position
+            HAVING COUNT(*) > 1
+            """
+        )
+    }
+    assert found == KNOWN_DUPLICATE_QUALIFYING_POSITIONS, (
+        f"new duplicates: {sorted(found - KNOWN_DUPLICATE_QUALIFYING_POSITIONS)}; "
+        f"resolved upstream: {sorted(KNOWN_DUPLICATE_QUALIFYING_POSITIONS - found)}"
+    )

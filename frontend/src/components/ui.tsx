@@ -161,16 +161,27 @@ export function Panel({
 export function PaneHead({ title, meta, flush }: { title: ReactNode; meta?: ReactNode; flush?: boolean }) {
   return (
     <div className={`pane__head${flush ? " pane__head--flush" : ""}`}>
-      <span className="pane__title">{title}</span>
+      {/* A real heading, not a styled span: a panel title is the heading of
+          its section, and pages like the libraries have no other h2. Without
+          it a screen-reader user gets one h1 and no way to skim the page. */}
+      <h2 className="pane__title">{title}</h2>
       {meta && <span className="pane__meta mono">{meta}</span>}
     </div>
   );
 }
 
-/** Equal-width cell grid with shared hairlines, as used by every KPI strip. */
+/**
+ * Equal-width cell grid with shared hairlines, as used by every KPI strip.
+ *
+ * The column count travels as a custom property, never as an inline
+ * `grid-template-columns`. An inline track list outranks every media query in
+ * the stylesheet, which pinned detail pages to six columns on a phone: six
+ * 48px cells whose labels and values were clipped to a few pixels each. As a
+ * variable it sets the desktop count and the breakpoints still get to override.
+ */
 export function CellGrid({ cols, children }: { cols: number; children: ReactNode }) {
   return (
-    <div className="kpi-strip" style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}>
+    <div className="kpi-strip" style={{ ["--kpi-cols" as string]: cols }}>
       {children}
     </div>
   );
@@ -219,6 +230,32 @@ export function PendingCell({ label, why }: { label: string; why: string }) {
       <div className="kpi__value-row">
         <div className="kpi__value mono kpi__value--pending">—</div>
         <div className="kpi__sub mono">to be added</div>
+      </div>
+      <div className="kpi__note">{why}</div>
+    </div>
+  );
+}
+
+/**
+ * A cell whose value could not be LOADED -- which is not the same thing as a
+ * value the dataset does not carry, and must never be rendered as one.
+ *
+ * `PendingCell` makes a claim about the source ("no standings recorded for
+ * this season"). When a request has failed, that claim is false: the standings
+ * exist and we simply could not fetch them. Saying "to be added" there told
+ * readers that 2022, 2024 and 2025 had no championship, which is exactly the
+ * kind of fabricated absence this project refuses everywhere else.
+ *
+ * So this state says the opposite: the value is unknown right now, and the
+ * reason is ours, not the data's.
+ */
+export function UnknownCell({ label, why }: { label: string; why: string }) {
+  return (
+    <div className="kpi kpi--pending">
+      <div className="kpi__label mono">{label}</div>
+      <div className="kpi__value-row">
+        <div className="kpi__value mono kpi__value--pending">—</div>
+        <div className="kpi__sub mono">unavailable</div>
       </div>
       <div className="kpi__note">{why}</div>
     </div>

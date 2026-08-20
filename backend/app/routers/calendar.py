@@ -3,10 +3,10 @@ from __future__ import annotations
 
 import sqlite3
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Path, Query
 
-from .. import analytics, schemas
-from ..db import get_db
+from .. import analytics, backends, schemas, supabase_repo
+from ..db import MAX_ID, fetch_one_or_404, get_db
 
 router = APIRouter()
 
@@ -16,56 +16,102 @@ router = APIRouter()
 RACE_SELECT = """
     SELECT ra.id, ra.season, ra.round, ra.name, ra.date,
            ra.circuit_id, ci.name AS circuit_name, ci.slug AS circuit_slug,
-           d.id AS winner_driver_id, d.name AS winner_driver,
-           c.id AS winner_constructor_id, c.name AS winner_constructor
+           d.id AS winner_driver_id, d.slug AS winner_driver_slug,
+           d.name AS winner_driver,
+           c.id AS winner_constructor_id, c.slug AS winner_constructor_slug,
+           c.name AS winner_constructor,
+           -- The winner's own grid and status, and whoever qualified first.
+           -- All three were in the database well before this payload carried
+           -- them, so the UI rendered "not in the source" beside data that
+           -- was there.
+           r.grid   AS winner_grid,
+           r.status AS winner_status,
+           pole.name AS qualifying_first,
+           pole.slug AS qualifying_first_slug
     FROM races ra
     JOIN circuits ci        ON ci.id = ra.circuit_id
     LEFT JOIN results r     ON r.race_id = ra.id AND r.position = 1
     LEFT JOIN drivers d     ON d.id = r.driver_id
     LEFT JOIN constructors c ON c.id = r.constructor_id
+    LEFT JOIN (
+        SELECT q.race_id, dq.name, dq.slug
+        FROM qualifying_results q
+        JOIN drivers dq ON dq.id = q.driver_id
+        WHERE q.position = 1
+    ) pole ON pole.race_id = ra.id
 """
 
 
 @router.get("/seasons", tags=["seasons"])
 def list_seasons(conn: sqlite3.Connection = Depends(get_db)):
-    return [
-        dict(row)
-        for row in conn.execute(
-            """
-            SELECT ra.season, COUNT(DISTINCT ra.id) AS races, COUNT(r.id) AS entries,
-                   COUNT(DISTINCT r.driver_id) AS drivers, COUNT(DISTINCT r.constructor_id) AS constructors
-            FROM races ra LEFT JOIN results r ON r.race_id = ra.id
-            GROUP BY ra.season ORDER BY ra.season DESC
-            """
-        )
-    ]
+    return backends.serve(
+        "seasons",
+        lambda: [
+            dict(row)
+            for row in conn.execute(
+                """
+                SELECT ra.season, COUNT(DISTINCT ra.id) AS races, COUNT(r.id) AS entries,
+                       COUNT(DISTINCT r.driver_id) AS drivers, COUNT(DISTINCT r.constructor_id) AS constructors
+                FROM races ra LEFT JOIN results r ON r.race_id = ra.id
+                GROUP BY ra.season ORDER BY ra.season DESC
+                """
+            )
+        ],
+        supabase_repo.seasons_index,
+    )
 
 
 @router.get("/seasons/{season}", tags=["seasons"])
-def get_season(season: int, conn: sqlite3.Connection = Depends(get_db)):
-    """Season detail with wins-based driver and constructor tables.
+def get_season(season: int = Path(ge=1950, le=2100), conn: sqlite3.Connection = Depends(get_db)):
+    """Season detail: the championship standings, plus wins-ordered tables.
 
-    `ranking_basis` is always "wins": these are NOT championship standings,
-    because the source carries no points column. Clients must label them.
+    Two different things are returned and they must not be conflated.
+
+    `standings` is the real championship -- race plus sprint points, verified
+    to reproduce the official champion and points total for every covered
+    season. This is what a reader means by "the standings".
+
+    `drivers` / `constructors` are ordered by wins, and `ranking_basis` says
+    so. They answer "who won the most races", which is a different question;
+    a driver can top that table without winning the championship. They are
+    retained because existing consumers read them.
+
+    The docstring here previously said these were NOT standings "because the
+    source carries no points column". Points have been ingested since; the
+    standings are real and the caveat was simply out of date.
     """
-    summary = analytics.season_summary(conn, season)
+    def from_sqlite():
+        summary = analytics.season_summary(conn, season)
+        if summary is None:
+            return None
+        summary["races_list"] = [
+            dict(row) for row in conn.execute(f"{RACE_SELECT} WHERE ra.season = ? ORDER BY ra.round", [season])
+        ]
+        return summary
+
+    summary = backends.serve(
+        "season",
+        from_sqlite,
+        lambda: supabase_repo.season_summary_payload(season),
+    )
     if summary is None:
         raise HTTPException(status_code=404, detail=f"No races recorded for season {season}")
-    summary["races_list"] = [
-        dict(row) for row in conn.execute(f"{RACE_SELECT} WHERE ra.season = ? ORDER BY ra.round", [season])
-    ]
     return summary
 
 
 @router.get("/seasons/{season}/rounds", tags=["seasons"])
-def get_season_rounds(season: int, conn: sqlite3.Connection = Depends(get_db)):
+def get_season_rounds(season: int = Path(ge=1950, le=2100), conn: sqlite3.Connection = Depends(get_db)):
     """Calendar order with each round's winner. Powers the round-by-round strip.
 
     `winner_driver` is null for a round the source carries no position-1 row
     for -- the round still appears, rather than the calendar looking shorter
     than it was.
     """
-    rounds = analytics.season_rounds(conn, season)
+    rounds = backends.serve(
+        "season_rounds",
+        lambda: analytics.season_rounds(conn, season),
+        lambda: supabase_repo.season_rounds_payload(season),
+    )
     if not rounds:
         raise HTTPException(status_code=404, detail=f"No races recorded for season {season}")
     return {"season": season, "rounds": rounds}
@@ -75,29 +121,181 @@ def get_season_rounds(season: int, conn: sqlite3.Connection = Depends(get_db)):
 def list_races(
     conn: sqlite3.Connection = Depends(get_db),
     season: int | None = Query(None, ge=1950, le=2100),
-    circuit_id: int | None = Query(None, ge=1),
+    circuit_id: int | None = Query(None, ge=1, le=MAX_ID),
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
 ):
-    where, params = "", []
-    if season is not None:
-        where += " AND ra.season = ?"
-        params.append(season)
+    def from_sqlite():
+        where, params = "", []
+        if season is not None:
+            where += " AND ra.season = ?"
+            params.append(season)
+        if circuit_id is not None:
+            where += " AND ra.circuit_id = ?"
+            params.append(circuit_id)
+        return [
+            dict(row)
+            for row in conn.execute(
+                f"{RACE_SELECT} WHERE 1=1{where} ORDER BY ra.season DESC, ra.round LIMIT ? OFFSET ?",
+                [*params, limit, offset],
+            )
+        ]
+
+    # circuit_id is store-local, so it is resolved to the portable slug before
+    # it can select rows in the other store. Passing the integer straight
+    # through would filter to a different circuit there.
+    circuit_slug = None
     if circuit_id is not None:
-        where += " AND ra.circuit_id = ?"
-        params.append(circuit_id)
-    return [
-        dict(row)
-        for row in conn.execute(
-            f"{RACE_SELECT} WHERE 1=1{where} ORDER BY ra.season DESC, ra.round LIMIT ? OFFSET ?",
-            [*params, limit, offset],
-        )
-    ]
+        circuit_slug = fetch_one_or_404(conn, "circuits", circuit_id)["slug"]
+
+    return backends.serve(
+        "races",
+        from_sqlite,
+        lambda: supabase_repo.race_summaries(
+            season_year=season, circuit_slug=circuit_slug, limit=limit, offset=offset,
+        ),
+    )
 
 
 @router.get("/races/{race_id}", tags=["races"])
-def get_race(race_id: int, conn: sqlite3.Connection = Depends(get_db)):
+def get_race(race_id: int = Path(ge=1, le=MAX_ID), conn: sqlite3.Connection = Depends(get_db)):
+    """Full race weekend: classification, qualifying, sprint and pit stops.
+
+    Each session reports its own availability rather than returning a bare
+    empty list. "No qualifying recorded for this race" and "nobody qualified"
+    look identical in JSON otherwise, and only one of them is true.
+    """
     row = conn.execute(f"{RACE_SELECT} WHERE ra.id = ?", [race_id]).fetchone()
     if row is None:
         raise HTTPException(status_code=404, detail=f"No race with id {race_id}")
-    return {**dict(row), "results": analytics.race_results(conn, race_id)}
+
+    if backends.selected() == backends.SUPABASE:
+        # Addressed by (season, round), never by the id in the URL: race ids
+        # are store-local, so passing one through would return a different
+        # race. The SQLite lookup above is what resolves the id to that
+        # portable key -- and what produces the 404.
+        return backends.serve(
+            "race",
+            lambda: None,
+            lambda: supabase_repo.race_detail(row["season"], row["round"]),
+        )
+
+    qualifying = analytics.qualifying_results(conn, race_id)
+    sprint = analytics.sprint_results(conn, race_id)
+    stops = analytics.pit_stops(conn, race_id)
+    quickest = analytics.fastest_lap(conn, race_id)
+    award = analytics.fastest_lap_award(conn, race_id)
+    practice_codes = analytics.practice_sessions_available(conn, race_id)
+
+    return {
+        **dict(row),
+        "results": analytics.race_results(conn, race_id),
+        "qualifying": {
+            "available": bool(qualifying),
+            # Why it is missing matters: pre-2003 is a known source gap, not a
+            # weekend without a qualifying session.
+            "unavailable_reason": None if qualifying else
+                "The source carries no qualifying for this race.",
+            "items": qualifying,
+        },
+        "sprint": {
+            "available": bool(sprint),
+            "unavailable_reason": None if sprint else
+                "No sprint was held at this event.",
+            "items": sprint,
+        },
+        "pit_stops": {
+            "available": bool(stops),
+            "unavailable_reason": None if stops else
+                "Pit stop data begins in 2011; none is recorded for this race.",
+            "items": stops,
+        },
+        "practice": {
+            "available": bool(practice_codes),
+            # Two distinct reasons to be empty, and they are different facts.
+            # Before 2018 there is no live timing at all; after it, an absence
+            # means this weekend's sessions are not ingested yet.
+            "unavailable_reason": None if practice_codes else (
+                "Practice timing begins in 2018; none exists for this race."
+                if row["season"] < 2018
+                else "Practice timing has not been ingested for this race."
+            ),
+            # Named for its provenance. Every other block on this payload comes
+            # from Jolpica; this one does not, and a reader comparing a
+            # practice time with a race time should know that.
+            "source": "FastF1 / F1 live timing",
+            "sessions": {
+                code: analytics.practice_results(conn, race_id, code)
+                for code in practice_codes
+            },
+        },
+        # TWO DIFFERENT THINGS, deliberately side by side.
+        #
+        # `fastest_lap_award` is what the sport actually gave, as published.
+        # `fastest_lap` is the quickest time anyone recorded, derived from the
+        # lap timings. They can name different drivers, because the award
+        # applies eligibility rules a raw minimum does not -- a classified
+        # finish, and since 2019 a top-ten position to score the point.
+        #
+        # Serving only one of them would force a reader to assume it was the
+        # other.
+        "fastest_lap_award": {
+            "available": award is not None,
+            "unavailable_reason": None if award else (
+                "The source publishes no fastest lap before 2004."
+                if row["season"] < 2004
+                else "No fastest-lap award recorded for this race."
+            ),
+            "basis": "as awarded by the sport, including eligibility rules",
+            "item": award,
+        },
+        "fastest_lap": {
+            "available": quickest is not None,
+            # Absent means the lap timings for this race have not been
+            # ingested -- the fetch is per race and resumable -- never that
+            # nobody set a lap.
+            "unavailable_reason": None if quickest else
+                "Lap timings have not been ingested for this race.",
+            # Named for what it is. This is the quickest lap driven, derived
+            # from the timings; it is NOT the official fastest-lap award,
+            # which no source publishes and which has eligibility rules this
+            # does not apply.
+            "basis": "minimum lap time recorded; not the official award",
+            "item": quickest,
+        },
+    }
+
+
+@router.get("/seasons/{season}/standings", tags=["seasons"])
+def get_standings(season: int = Path(ge=1950, le=2100), conn: sqlite3.Connection = Depends(get_db)):
+    """Championship standings: race points plus sprint points.
+
+    These ARE the championship, unlike the wins-ordered tables on
+    `/seasons/{season}`. Verified to reproduce the official champion and exact
+    points total for every season in the dataset.
+    """
+    drivers, constructors = backends.serve(
+        "standings",
+        lambda: (
+            analytics.standings(conn, season, "driver"),
+            analytics.standings(conn, season, "constructor"),
+        ),
+        lambda: (
+            supabase_repo.standings_detail(season, "driver"),
+            supabase_repo.standings_detail(season, "constructor"),
+        ),
+    )
+    if not drivers:
+        raise HTTPException(status_code=404, detail=f"No races recorded for season {season}")
+    return {
+        "season": season,
+        "basis": "points",
+        "includes_sprint_points": True,
+        "caveat": (
+            "Ties are broken by wins, then podiums. The official countback "
+            "rule is not implemented, so an exact points tie may order "
+            "differently from the official classification."
+        ),
+        "drivers": drivers,
+        "constructors": constructors,
+    }

@@ -1,0 +1,7 @@
+# Every file in this repository is owned by the author.
+#
+# Paired with a branch protection rule that requires review from Code Owners,
+# this prevents anything reaching the default branch without the owner's
+# approval. On its own it does nothing but assign default reviewers.
+
+* @malek-pixel

@@ -1,11 +1,7 @@
 import type { DriverContribution } from "../types";
 import { num, pct } from "../components/format";
 import { ChartFrame } from "./Chart";
-
-/** Categorical series colours. Chosen for contrast against the dark surface
- *  and distinguishable in the common forms of colour blindness -- and every
- *  segment is labelled in the data table regardless. */
-const SERIES = ["#e10600", "#0090ff", "#22c55e", "#f59e0b", "#a78bfa", "#14b8a6", "#f472b6", "#94a3b8"];
+import { SERIES } from "./palette";
 
 /**
  * Driver contribution within a constructor, as a stacked proportion bar.

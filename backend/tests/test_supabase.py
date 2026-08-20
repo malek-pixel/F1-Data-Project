@@ -111,12 +111,51 @@ def test_cars_table_is_empty_not_fabricated():
     assert total == 0
 
 
-def test_no_points_or_status_columns_exist():
-    """Guards the design rule: the fact table carries only measured columns.
-    An all-NULL points column would invite zero-substitution."""
+def test_enrichment_columns_exist_and_are_populated():
+    """The design rule, restated for the columns that now have a source.
+
+    This test used to assert that `points`, `status`, `grid` and `laps` did
+    NOT exist. That was the correct guarantee while no source supplied them:
+    an all-NULL column invites zero-substitution and breaks every aggregate.
+
+    A source now supplies them (Jolpica-F1, cross-validated across all 10,550
+    rows), so the rule is not "these columns must be absent" -- it is "a column
+    that exists must be populated, not a placeholder". That is what is checked
+    here instead.
+    """
     rows, _ = repo.query("results", select="*", limit=1)
-    forbidden = {"points", "grid", "laps", "status", "fastest_lap"}
-    assert not (forbidden & set(rows[0])), "results gained a speculative column"
+    present = set(rows[0])
+    for column in ("points", "grid", "laps", "status", "classification"):
+        assert column in present, f"results lost its {column} column"
+
+    # The fastest-lap columns joined this table in migration 24. They were on
+    # the forbidden list above until then, correctly: Postgres had no source
+    # for them. It does now -- the enrichment SQLite already carried was
+    # loaded by backend/etl/backfill_fastest_lap.py -- so the rule that
+    # applies is the same one as for points and grid: present means
+    # populated, not a placeholder.
+    for column in ("fastest_lap_rank", "fastest_lap_number", "fastest_lap_time"):
+        assert column in present, f"results lost its {column} column"
+
+    _, enriched = repo.query(
+        "results", select="id", filters={"fastest_lap_rank": "not.is.null"},
+        limit=1, exact_count=True,
+    )
+    assert enriched, "fastest_lap_rank exists but no row carries a value"
+
+    # Still forbidden: no source provides these, so they must not appear.
+    # `tyre_compound` belongs to practice_laps, which has a source; on a RACE
+    # result it would have none.
+    speculative = {"pit_stops", "tyre_compound", "race_time", "gap_to_winner"}
+    assert not (speculative & present), "results gained a column with no source"
+
+    # A column that exists must carry values. One NULL row would be enough to
+    # reintroduce exactly the ambiguity the original rule was protecting.
+    _, unpopulated = repo.query(
+        "results", select="id", filters={"classification": "is.null"},
+        limit=1, exact_count=True,
+    )
+    assert unpopulated == 0, f"{unpopulated} result rows have no finishing status"
 
 
 # --------------------------------------------------------------------------
