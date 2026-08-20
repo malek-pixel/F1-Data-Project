@@ -37,13 +37,20 @@ jobs:
           python-version: "3.11"
           cache: pip
 
-      # The API, ETL and analytics layers are standard-library only apart from
-      # FastAPI. fastf1/psycopg are ingestion-side and are not installed here:
-      # nothing under test imports them, and they are slow to build.
+      # Not -r requirements.txt: that pulls fastf1, which drags in pandas and
+      # scipy to run no test at all. This is the subset the suite actually
+      # imports, which is not the same as the subset the API imports --
+      # test_laps_and_sessions reaches backend.etl.jolpica (requests) and
+      # test_store_parity imports psycopg directly. Leaving those two out is
+      # what failed CI #1 and #2: pytest exits 2 on a collection error, which
+      # reads as a crash rather than as a missing dependency.
+      #
+      # Verified in a clean venv holding exactly this list and nothing else:
+      # 244 passed, 138 skipped, and fastf1 still absent.
       - name: Install
         run: |
           python -m pip install --upgrade pip
-          pip install "fastapi>=0.110" "pydantic>=2.6" "pytest>=8.0" "httpx>=0.27" "uvicorn[standard]>=0.27"
+          pip install "fastapi>=0.110" "pydantic>=2.6" "pytest>=8.0" "httpx>=0.27"                       "uvicorn[standard]>=0.27" "requests>=2.31" "psycopg[binary]>=3.1"
 
       - name: Build the database from the committed CSV
         run: python -m backend.etl.build

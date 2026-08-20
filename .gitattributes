@@ -11,3 +11,12 @@
 # would make the same commit produce a different database on another platform.
 results.csv           -text
 backend/etl/circuit_map.csv -text
+
+# Migrations are checksummed byte-for-byte in CHECKSUMS.md5, so their line
+# endings are part of their identity. Two of them were committed from Windows
+# with CRLF while the repository stored LF, which made verify_migrations.py
+# fail on every fresh checkout -- including CI -- while passing on the one
+# working copy the checksums were generated from. eol=lf forces LF in the
+# working tree on every platform, so what is hashed locally is what is
+# committed.
+supabase/migrations/*.sql text eol=lf
