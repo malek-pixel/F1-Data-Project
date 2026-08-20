@@ -166,7 +166,7 @@ export function CircuitStrengthSection({ driverId }: { driverId: number | string
                   {
                     key: "circuit",
                     header: "Circuit",
-                    render: (r) => <Link to={`/circuits/${r.circuit_id}`}>{r.circuit_name}</Link>,
+                    render: (r) => <Link to={`/circuits/${r.slug}`}>{r.circuit_name}</Link>,
                   },
                   { key: "app", header: "Starts", numeric: true, render: (r) => num(r.appearances) },
                   { key: "wins", header: "Wins", numeric: true, render: (r) => num(r.wins) },

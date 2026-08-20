@@ -78,7 +78,11 @@ def driver_qualifying(driver_id: str, conn: sqlite3.Connection = Depends(get_db)
     The field name says exactly what was counted.
     """
     row = fetch_one_or_404(conn, "drivers", driver_id)
-    stats = analytics.driver_qualifying_stats(conn, row["id"])
+    stats = backends.serve(
+        "driver_qualifying",
+        lambda: analytics.driver_qualifying_stats(conn, row["id"]),
+        lambda: supabase_repo.driver_qualifying_payload(row["slug"]),
+    )
     since = stats.get("coverage_from")
     return {
         **stats,
@@ -104,11 +108,15 @@ def driver_teammates(driver_id: str, conn: sqlite3.Connection = Depends(get_db))
     mid-season replacements.
     """
     row = fetch_one_or_404(conn, "drivers", driver_id)
-    return {
-        "summary": advanced.teammate_summary(conn, row["id"]),
-        "spells": advanced.teammate_records(conn, row["id"]),
-        "methodology": advanced.METRICS_BY_KEY["teammate_h2h"],
-    }
+    return backends.serve(
+        "teammate_records",
+        lambda: {
+            "summary": advanced.teammate_summary(conn, row["id"]),
+            "spells": advanced.teammate_records(conn, row["id"]),
+            "methodology": advanced.METRICS_BY_KEY["teammate_h2h"],
+        },
+        lambda: supabase_repo.teammates_payload(row["slug"]),
+    )
 
 
 @router.get("/drivers/{driver_id}/circuits", tags=["drivers"])
@@ -119,11 +127,19 @@ def driver_circuits(
 ):
     """Per-circuit record, each compared against the driver's own career average."""
     row = fetch_one_or_404(conn, "drivers", driver_id)
-    return {
-        "circuits": advanced.circuit_profile(conn, row["id"], min_appearances),
-        "min_appearances": min_appearances,
-        "methodology": advanced.METRICS_BY_KEY["circuit_specialism"],
-    }
+    return backends.serve(
+        "driver_circuits",
+        lambda: {
+            "circuits": advanced.circuit_profile(conn, row["id"], min_appearances),
+            "min_appearances": min_appearances,
+            "methodology": advanced.METRICS_BY_KEY["circuit_specialism"],
+        },
+        lambda: {
+            "circuits": supabase_repo.driver_circuit_profile(row["slug"], min_appearances),
+            "min_appearances": min_appearances,
+            "methodology": advanced.METRICS_BY_KEY["circuit_specialism"],
+        },
+    )
 
 
 # --------------------------------------------------------------------------
@@ -137,7 +153,16 @@ def constructor_distribution(
     season: int | None = Query(None, ge=1950, le=2100),
 ):
     row = fetch_one_or_404(conn, "constructors", constructor_id)
-    return advanced.distribution(conn, constructor_id=row["id"], season=season)
+    if season is not None:
+        # The view aggregates every season; a season filter is not expressible
+        # against it without a second view. Served from SQLite and not claimed
+        # as Supabase-backed.
+        return advanced.distribution(conn, constructor_id=row["id"], season=season)
+    return backends.serve(
+        "constructor_distribution",
+        lambda: advanced.distribution(conn, constructor_id=row["id"]),
+        lambda: supabase_repo.constructor_distribution(row["slug"]),
+    )
 
 
 # --------------------------------------------------------------------------
@@ -158,7 +183,11 @@ def circuit_specialists(
     """
     row = fetch_one_or_404(conn, "circuits", circuit_id)
     return {
-        "specialists": advanced.circuit_specialists(conn, row["id"], min_appearances),
+        "specialists": backends.serve(
+            "circuit_specialists",
+            lambda: advanced.circuit_specialists(conn, row["id"], min_appearances),
+            lambda: supabase_repo.circuit_specialists_list(row["slug"], min_appearances),
+        ),
         "min_appearances": min_appearances,
         "methodology": advanced.METRICS_BY_KEY["circuit_specialism"],
     }
@@ -186,7 +215,11 @@ def dominance_timeline(conn: sqlite3.Connection = Depends(get_db)):
     """Per-season concentration across the dataset: how many drivers and teams
     won races each year, and the leader's share."""
     return {
-        "seasons": advanced.dominance_timeline(conn),
+        "seasons": backends.serve(
+            "dominance_timeline",
+            lambda: advanced.dominance_timeline(conn),
+            lambda: supabase_repo.dominance_timeline(),
+        ),
         "methodology": advanced.METRICS_BY_KEY["season_dominance"],
     }
 

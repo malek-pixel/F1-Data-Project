@@ -77,6 +77,7 @@ measured rather than declared -- see backend/etl/audit.py.
 """
 from __future__ import annotations
 
+import decimal
 import logging
 import re
 import sqlite3
@@ -113,6 +114,28 @@ _STATS_SELECT = """
     AVG(CASE WHEN r.grid > 0 AND r.classification = 'classified'
              THEN CAST(r.grid - r.position AS REAL) END) AS avg_positions_gained
 """
+
+
+def round_half_up(value, digits: int):
+    """Round half away from zero, preserving None.
+
+    Python's built-in round() is half-to-EVEN: round(-0.3125, 3) is -0.312.
+    Postgres's round(numeric, n) is half-away-from-ZERO: -0.313. Both are
+    defensible, but the two backends must not disagree, and a value that
+    changes when you switch data store is exactly what the parity suite
+    exists to prevent -- it was reporting avg_positions_gained as -0.312 on
+    SQLite and -0.313 on Supabase.
+
+    Postgres's rule wins because the views already round in SQL, and because
+    half-away-from-zero is what a reader expects from "rounded to 3dp".
+    """
+    if value is None:
+        return None
+    quantum = decimal.Decimal(1).scaleb(-digits)
+    result = decimal.Decimal(repr(float(value))).quantize(
+        quantum, rounding=decimal.ROUND_HALF_UP
+    )
+    return float(result)
 
 
 def _stats(row: sqlite3.Row | None) -> dict:
@@ -158,7 +181,7 @@ def _stats(row: sqlite3.Row | None) -> dict:
         "podium_rate": row["podiums"] / entries,
         "top5_rate": row["top5"] / entries,
         "top10_rate": row["top10"] / entries,
-        "avg_classified_position": round(row["avg_position"], 3),
+        "avg_classified_position": round_half_up(row["avg_position"], 3),
         "best_classified_position": row["best_position"],
         "rates_reliable": entries >= MIN_ENTRIES_FOR_RATES,
         "finishes": row["finishes"] if enriched else None,
@@ -166,12 +189,9 @@ def _stats(row: sqlite3.Row | None) -> dict:
         # Denominator is `enriched`, not `entries`: a partially enriched build
         # must not report a rate over rows it knows nothing about.
         "dnf_rate": (row["dnfs"] / enriched) if enriched else None,
-        "points": round(row["points"], 2) if row["points"] is not None else None,
-        "avg_grid": round(row["avg_grid"], 3) if row["avg_grid"] is not None else None,
-        "avg_positions_gained": (
-            round(row["avg_positions_gained"], 3)
-            if row["avg_positions_gained"] is not None else None
-        ),
+        "points": round_half_up(row["points"], 2),
+        "avg_grid": round_half_up(row["avg_grid"], 3),
+        "avg_positions_gained": round_half_up(row["avg_positions_gained"], 3),
     }
 
 
@@ -311,7 +331,9 @@ def constructor_driver_contribution(
         JOIN drivers d  ON d.id  = r.driver_id
         WHERE r.constructor_id = ?{where}
         GROUP BY d.id
-        ORDER BY wins DESC, entries DESC, d.name
+        -- Slug, not name, as the final tiebreak: it is unique and identical
+        -- in both stores, where name ordering depends on collation.
+        ORDER BY wins DESC, entries DESC, d.slug
         """,
         [constructor_id, *params],
     ).fetchall()
@@ -344,14 +366,23 @@ def constructor_driver_contribution(
 # ORDER BY fragments. `name` MUST stay qualified as e.name: the query joins
 # `races`, which also has a `name` column, so a bare `name` is ambiguous and
 # SQLite rejects the whole statement.
+#
+# Every fragment ends in `e.slug`, which is unique and identical on both
+# stores. Without a total order the rows tied on the last named column come
+# back in whatever order the engine happens to produce -- which differed
+# between SQLite and Postgres, so page 2 of a listing held different drivers
+# depending on the backend, and could differ between two runs of the same
+# query. A tiebreak that never ties is what makes pagination stable.
 _LEADERBOARD_SORTS = {
-    "wins": "wins DESC, podiums DESC, entries DESC",
-    "podiums": "podiums DESC, wins DESC, entries DESC",
-    "entries": "entries DESC, wins DESC",
-    "win_rate": "CAST(wins AS REAL) / entries DESC, wins DESC",
-    "podium_rate": "CAST(podiums AS REAL) / entries DESC, podiums DESC",
-    "avg_position": "avg_position ASC",
-    "name": "e.name ASC",
+    "wins": "wins DESC, podiums DESC, entries DESC, e.slug ASC",
+    "podiums": "podiums DESC, wins DESC, entries DESC, e.slug ASC",
+    "entries": "entries DESC, wins DESC, e.slug ASC",
+    "win_rate": "CAST(wins AS REAL) / entries DESC, wins DESC, e.slug ASC",
+    "podium_rate": "CAST(podiums AS REAL) / entries DESC, podiums DESC, e.slug ASC",
+    "avg_position": "avg_position ASC, e.slug ASC",
+    # BINARY collation, matched on the Postgres side by a `collate "C"` sort
+    # key. Locale collation there put accented names elsewhere in the list.
+    "name": "e.name ASC, e.slug ASC",
 }
 
 
@@ -427,7 +458,7 @@ def leaderboard(
         params += hidden_params
 
     base = f"""
-        SELECT e.id, e.slug, e.name, {_STATS_SELECT}
+        SELECT e.id, e.slug, e.name, e.nationality, {_STATS_SELECT}
         FROM results r
         JOIN races ra   ON ra.id = r.race_id
         JOIN {table} e  ON e.id  = {id_column}
@@ -451,7 +482,14 @@ def leaderboard(
         "limit": limit,
         "offset": offset,
         "items": [
-            {"id": row["id"], "slug": row["slug"], "name": row["name"], **_stats(row)}
+            {
+                "id": row["id"], "slug": row["slug"], "name": row["name"],
+                # Carried on the listing so the library card can show it. All
+                # 129 drivers and every constructor have one; the card used to
+                # render "NAT —" beside a tooltip claiming the source had none.
+                "nationality": row["nationality"],
+                **_stats(row),
+            }
             for row in rows
         ],
     }
@@ -504,7 +542,7 @@ def standings(conn: sqlite3.Connection, season: int, entity: str = "driver") -> 
                COUNT(scored.position)                               AS entries
         FROM scored JOIN {table} e ON e.id = scored.entity_id
         GROUP BY e.id
-        ORDER BY points DESC, wins DESC, podiums DESC, e.name
+        ORDER BY points DESC, wins DESC, podiums DESC, e.slug
         """,
         [season, season],
     ).fetchall()
@@ -743,7 +781,10 @@ def pit_stops(conn: sqlite3.Connection, race_id: int) -> list[dict]:
         FROM pit_stops p
         JOIN drivers d ON d.id = p.driver_id
         WHERE p.race_id = ?
-        ORDER BY p.lap, p.stop
+        -- Slug as the final tiebreak: two cars can pit on the same lap for
+        -- the same stop number, and without it the order is whatever the
+        -- engine happens to produce -- which differed between the stores.
+        ORDER BY p.lap, p.stop, d.slug
         """,
         [race_id],
     ).fetchall()
@@ -977,6 +1018,40 @@ def compare(conn: sqlite3.Connection, entity: str, left_id: int, right_id: int) 
 # Records, insights, dataset summary
 # --------------------------------------------------------------------------
 
+# The record list, defined ONCE.
+#
+# supabase_repo builds the same list from its own store using these specs, so
+# the two backends cannot drift in which records exist, what they are called
+# or how each is explained. They did: `v_records` was an independently
+# authored set with different labels, different methodology wording, values
+# rounded to four places and one record missing entirely, and nothing
+# compared them because /api/records never reached backends.serve.
+#
+# (label, entity, sort key, min entries, stat field, methodology template)
+RECORD_SPECS = (
+    ("Most wins (driver)", "driver", "wins", 1, "wins", "Race wins, {span}."),
+    ("Most podiums (driver)", "driver", "podiums", 1, "podiums", "Classified P1-P3, {span}."),
+    ("Most entries (driver)", "driver", "entries", 1, "entries", "Race classifications, {span}."),
+    ("Highest win rate (driver)", "driver", "win_rate", MIN_ENTRIES_FOR_RATES, "win_rate",
+     f"wins / entries, minimum {MIN_ENTRIES_FOR_RATES} entries."),
+    ("Best average classified position (driver)", "driver", "avg_position",
+     MIN_ENTRIES_FOR_RATES, "avg_classified_position",
+     f"Mean classification incl. retirements, minimum {MIN_ENTRIES_FOR_RATES} entries."),
+    ("Most wins (constructor)", "constructor", "wins", 1, "wins", "Race wins, {span}."),
+    ("Most podiums (constructor)", "constructor", "podiums", 1, "podiums",
+     "Classified P1-P3, {span}."),
+)
+
+BEST_SEASON_RECORD = (
+    "Most wins in a single season (driver)",
+    "Wins within one season. Season lengths vary (16-24 races), so totals are not era-normalised.",
+)
+CIRCUIT_KING_RECORD = (
+    "Most wins at one circuit (driver)",
+    "Wins at a single circuit across {span}. Circuits appear in different numbers of seasons.",
+)
+
+
 def records(conn: sqlite3.Connection) -> list[dict]:
     """Dataset-wide records. Every entry states its own methodology.
 
@@ -1019,23 +1094,8 @@ def records(conn: sqlite3.Connection) -> list[dict]:
     span = coverage_span(conn)
 
     entries = [
-        ("Most wins (driver)", top("driver", "wins"), "wins", f"Race wins, {span}."),
-        ("Most podiums (driver)", top("driver", "podiums"), "podiums", f"Classified P1-P3, {span}."),
-        ("Most entries (driver)", top("driver", "entries"), "entries", f"Race classifications, {span}."),
-        (
-            "Highest win rate (driver)",
-            top("driver", "win_rate", MIN_ENTRIES_FOR_RATES),
-            "win_rate",
-            f"wins / entries, minimum {MIN_ENTRIES_FOR_RATES} entries.",
-        ),
-        (
-            "Best average classified position (driver)",
-            top("driver", "avg_position", MIN_ENTRIES_FOR_RATES),
-            "avg_classified_position",
-            f"Mean classification incl. retirements, minimum {MIN_ENTRIES_FOR_RATES} entries.",
-        ),
-        ("Most wins (constructor)", top("constructor", "wins"), "wins", f"Race wins, {span}."),
-        ("Most podiums (constructor)", top("constructor", "podiums"), "podiums", f"Classified P1-P3, {span}."),
+        (label, top(entity, sort, min_entries), field, note.format(span=span))
+        for label, entity, sort, min_entries, field, note in RECORD_SPECS
     ]
 
     out = [
@@ -1046,21 +1106,21 @@ def records(conn: sqlite3.Connection) -> list[dict]:
     if best_season:
         out.append(
             {
-                "record": "Most wins in a single season (driver)",
+                "record": BEST_SEASON_RECORD[0],
                 "entity": best_season["name"],
                 "value": best_season["wins"],
                 "context": str(best_season["season"]),
-                "methodology": "Wins within one season. Season lengths vary (16-24 races), so totals are not era-normalised.",
+                "methodology": BEST_SEASON_RECORD[1],
             }
         )
     if circuit_king:
         out.append(
             {
-                "record": "Most wins at one circuit (driver)",
+                "record": CIRCUIT_KING_RECORD[0],
                 "entity": circuit_king["name"],
                 "value": circuit_king["wins"],
                 "context": circuit_king["circuit"],
-                "methodology": f"Wins at a single circuit across {span}. Circuits appear in different numbers of seasons.",
+                "methodology": CIRCUIT_KING_RECORD[1].format(span=span),
             }
         )
     return out
@@ -1425,7 +1485,44 @@ def dataset_summary(conn: sqlite3.Connection) -> dict:
          "complete from {q}; sparse before"),
         ("sprint results", "SELECT COUNT(*) FROM sprint_results", "2021 onward"),
         ("pit stops", "SELECT COUNT(*) FROM pit_stops", "2011 onward"),
+        # These four were a static "unavailable" tail until the lap, practice
+        # and fastest-lap ingestions landed, at which point the UI began
+        # telling readers the tool could not show data it holds 552,138 rows
+        # of. That is the fourth recurrence of this project's oldest bug, and
+        # the fix is the same as the others: probe, never assert. Windows are
+        # measured below rather than written here.
+        ("fastest lap", "SELECT COUNT(fastest_lap_time) FROM results", "{fl}"),
+        ("race lap times", "SELECT COUNT(*) FROM lap_times", "{laps}"),
+        # Sector times and compounds come from the practice ingestion only.
+        # The race lap data carries neither, so the window is the session
+        # type, not a season range -- saying "available" unqualified would
+        # promise race sectors that do not exist.
+        ("sector times", "SELECT COUNT(sector1) FROM practice_laps",
+         "practice sessions only"),
+        ("tyre compounds", "SELECT COUNT(compound) FROM practice_laps",
+         "practice sessions only"),
     ]
+
+    def season_window(sql: str) -> str | None:
+        """The season range over which a probe's field actually has rows."""
+        try:
+            row = conn.execute(sql).fetchone()
+        except sqlite3.Error:
+            return None
+        if not row or row["lo"] is None:
+            return None
+        return f"{row['lo']}" if row["lo"] == row["hi"] else f"{row['lo']}-{row['hi']}"
+
+    windows = {
+        "fl": season_window(
+            "SELECT MIN(ra.season) AS lo, MAX(ra.season) AS hi FROM races ra "
+            "JOIN results r ON r.race_id = ra.id WHERE r.fastest_lap_time IS NOT NULL"
+        ),
+        "laps": season_window(
+            "SELECT MIN(ra.season) AS lo, MAX(ra.season) AS hi FROM races ra "
+            "JOIN lap_times l ON l.race_id = ra.id"
+        ),
+    }
 
     available_fields = ["season", "round", "race_name", "date", "position",
                         "driver", "constructor"]
@@ -1436,18 +1533,19 @@ def dataset_summary(conn: sqlite3.Connection) -> dict:
             if note and "{q}" in note:
                 since = qualifying_coverage_from(conn)
                 note = note.format(q=since) if since else "partial early coverage"
+            elif note and note.startswith("{"):
+                note = windows.get(note.strip("{}")) or None
             available_fields.append(f"{label} ({note})" if note else label)
         else:
             unavailable_fields.append(label)
 
-    # No source supplies these at all, in any build.
-    unavailable_fields += [
-        "fastest lap",
-        "lap times / sector times",
-        "tyre compounds",
-        "telemetry",
-        "car specifications",
-    ]
+    # Genuinely absent from every source this project ingests. `cars` is
+    # probed rather than asserted because the table exists and is empty by
+    # design -- the day something fills it, this line must stop claiming
+    # otherwise on its own.
+    unavailable_fields.append("telemetry")
+    if not count("SELECT COUNT(*) FROM cars"):
+        unavailable_fields.append("car specifications")
 
     return {
         "source": "results.csv, enriched from Jolpica-F1",
@@ -1580,8 +1678,14 @@ def search(conn: sqlite3.Connection, query: str, limit: int = 8) -> list[dict]:
          "sublabel": row["country"]}
         for row in conn.execute(
             "SELECT id, slug, name, country FROM circuits WHERE name LIKE ? ESCAPE '\\' OR country LIKE ? ESCAPE '\\' "
-            "ORDER BY INSTR(LOWER(name), LOWER(?)), name LIMIT ?",
-            [pattern, pattern, text, limit],
+            # A circuit matches on its country too, and INSTR returns 0 when
+            # the term is absent from the NAME -- which sorted those ahead of
+            # every real name match, because 0 < 1. Searching "spa" put
+            # Barcelona and Valencia (both in Spain) above Spa-Francorchamps.
+            # Absent means last, not first.
+            "ORDER BY CASE WHEN INSTR(LOWER(name), LOWER(?)) = 0 THEN 999 "
+            "ELSE INSTR(LOWER(name), LOWER(?)) END, name LIMIT ?",
+            [pattern, pattern, text, text, limit],
         )
     ]
 

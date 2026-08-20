@@ -214,13 +214,22 @@ def test_dataset_summary_availability_matches_the_database(client):
     unavailable = body["unavailable_fields"]
 
     # Ingested, so each must be advertised as available.
+    #
+    # The last four joined this list after the lap, practice and fastest-lap
+    # ingestions. They were in the "must stay declared absent" check below --
+    # this test asserted that the API keep calling them unavailable, which is
+    # how the exact failure its own docstring describes happened a second
+    # time, in the file written to prevent it.
     for field in ("championship points", "finishing status", "grid position",
-                  "qualifying", "sprint results", "pit stops"):
+                  "qualifying", "sprint results", "pit stops",
+                  "fastest lap", "race lap times", "sector times", "tyre compounds"):
         assert field in available, f"{field} is ingested but not advertised"
         assert field not in unavailable
 
     # No source supplies these anywhere, so they must stay declared absent.
-    for field in ("fastest lap", "tyre compounds", "telemetry", "car specifications"):
+    # `cars` is empty by design; if it is ever filled, the probe stops
+    # claiming otherwise and this assertion is what will say so.
+    for field in ("telemetry", "car specifications"):
         assert field in unavailable
 
     # And nothing may be called unavailable while rows exist for it.
@@ -232,6 +241,10 @@ def test_dataset_summary_availability_matches_the_database(client):
         "finishing status (DNF / DNS / DSQ)": "SELECT COUNT(classification) FROM results",
         "pit stops": "SELECT COUNT(*) FROM pit_stops",
         "qualifying": "SELECT COUNT(*) FROM qualifying_results",
+        "fastest lap": "SELECT COUNT(fastest_lap_time) FROM results",
+        "race lap times": "SELECT COUNT(*) FROM lap_times",
+        "sector times": "SELECT COUNT(sector1) FROM practice_laps",
+        "tyre compounds": "SELECT COUNT(compound) FROM practice_laps",
     }
     try:
         for field, sql in populated.items():

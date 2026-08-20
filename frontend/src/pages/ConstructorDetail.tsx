@@ -43,7 +43,7 @@ export function ConstructorDetail() {
                 </div>
               </div>
               <div className="entity-head__actions">
-                <Link className="btn" to={`/compare?kind=constructors&left=${team.id}`}>
+                <Link className="btn" to={`/compare?kind=constructors&left=${team.slug}`}>
                   Compare
                 </Link>
                 {/* Mockup § 07 hangs a car gallery off the team page. */}

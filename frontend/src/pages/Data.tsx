@@ -62,15 +62,29 @@ export function Records() {
                 ),
               )}
 
-              {/* The mockup also lists most poles, most WCC titles and
-                  fewest DNFs per race. Each needs a column the source does
-                  not have, so each keeps its slot and says so. */}
+              {/* The mockup also lists most poles, most WCC titles and fewest
+                  DNFs per race. This panel used to say the source had no
+                  qualifying, points or finishing-status column and so could
+                  never produce them. All three columns exist now -- 9,577
+                  qualifying rows, points and classification on all 10,550
+                  results -- so the honest statement is that these records are
+                  not built yet, not that they are impossible. The distinction
+                  matters: one is a backlog item, the other is a data limit. */}
               <Panel>
-                <PaneHead title="RECORDS THIS DATASET CANNOT PRODUCE" meta="WOULD NEED NEW SOURCE COLUMNS" />
+                <PaneHead title="RECORDS NOT BUILT YET" meta="DATA EXISTS · RECORD NOT IMPLEMENTED" />
                 <CellGrid cols={3}>
-                  <PendingCell label="MOST POLES" why="No qualifying or grid column in the source" />
-                  <PendingCell label="MOST WCC TITLES" why="Titles require a points column" />
-                  <PendingCell label="FEWEST DNFs / RACE" why="No finishing-status column in the source" />
+                  <PendingCell
+                    label="MOST QUALIFYING P1"
+                    why="Qualifying is ingested and shown per driver; this dataset-wide record is not built yet"
+                  />
+                  <PendingCell
+                    label="MOST WCC TITLES"
+                    why="Points and standings exist; counting title-winning seasons is not built yet"
+                  />
+                  <PendingCell
+                    label="FEWEST DNFs / RACE"
+                    why="DNF rate is ingested and shown per driver; this dataset-wide record is not built yet"
+                  />
                 </CellGrid>
               </Panel>
 

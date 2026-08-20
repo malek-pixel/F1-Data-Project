@@ -25,6 +25,7 @@ import type {
   SeasonIndexRow,
   SeasonRounds,
   SeasonSummary,
+  Standings,
 } from "../types";
 
 interface Dominance {
@@ -116,9 +117,18 @@ export function SeasonIndex() {
                   { key: "constructors", header: "Constructors", numeric: true, render: (r) => num(r.constructors) },
                   { key: "entries", header: "Classifications", numeric: true, render: (r) => num(r.entries) },
                   {
+                    // Points are ingested and standings are served for every
+                    // season, so this column is a fetch cost, not a data
+                    // limit. Filling it here would mean one
+                    // standings request per row, so the season page carries
+                    // the leader instead and this says where to find it.
                     key: "wdc",
                     header: "WDC",
-                    render: () => <PendingValue title="Champions require a points column; results.csv has none" />,
+                    render: (r) => (
+                      <Link to={`/seasons/${r.season}`} className="mono">
+                        See season →
+                      </Link>
+                    ),
                   },
                 ]}
               />
@@ -136,6 +146,7 @@ export function SeasonDetail() {
   const state = useApi<SeasonSummary>(`/seasons/${season}`);
   const dominance = useApi<Dominance>(`/seasons/${season}/dominance`);
   const rounds = useApi<SeasonRounds>(`/seasons/${season}/rounds`);
+  const standings = useApi<Standings>(`/seasons/${season}/standings`);
 
   return (
     <Async state={state} loadingRows={6}>
@@ -175,8 +186,34 @@ export function SeasonDetail() {
                   value={num(summary.entries)}
                   note="One row per driver per race"
                 />
-                <PendingCell label="WDC WINNER" why="Champions require a points column; the source has none" />
-                <PendingCell label="WCC WINNER" why="Champions require a points column; the source has none" />
+                {/* These two read "Champions require a points column; the
+                    source has none" long after points were ingested -- while
+                    the home page displayed the very same championship leader
+                    from the very same endpoint. Points are on all 10,550
+                    results and standings are served for every season.
+
+                    Labelled LEADER, not CHAMPION: ties are broken here by
+                    wins then podiums, and the official countback rule is not
+                    implemented, so this is the points leader rather than an
+                    adjudicated title. */}
+                {standings.data?.drivers?.[0] ? (
+                  <Cell
+                    label="WDC · POINTS LEADER"
+                    value={standings.data.drivers[0].name}
+                    note={`${num(standings.data.drivers[0].points)} pts · ties not adjudicated by countback`}
+                  />
+                ) : (
+                  <PendingCell label="WDC · POINTS LEADER" why="No standings recorded for this season" />
+                )}
+                {standings.data?.constructors?.[0] ? (
+                  <Cell
+                    label="WCC · POINTS LEADER"
+                    value={standings.data.constructors[0].name}
+                    note={`${num(standings.data.constructors[0].points)} pts · ties not adjudicated by countback`}
+                  />
+                ) : (
+                  <PendingCell label="WCC · POINTS LEADER" why="No standings recorded for this season" />
+                )}
               </CellGrid>
             </Panel>
 
@@ -332,7 +369,7 @@ export function SeasonDetail() {
                   {
                     key: "circuit",
                     header: "Circuit",
-                    render: (r) => <Link to={`/circuits/${r.circuit_id}`}>{r.circuit_name}</Link>,
+                    render: (r) => <Link to={`/circuits/${r.circuit_slug}`}>{r.circuit_name}</Link>,
                   },
                   { key: "date", header: "Date", render: (r) => <span className="mono">{formatDate(r.date)}</span> },
                   {
@@ -605,7 +642,7 @@ export function RaceDetail() {
                   {race.season} {race.name}
                 </h1>
                 <div className="entity-head__sub">
-                  <Link to={`/circuits/${race.circuit_id}`}>{race.circuit_name}</Link> ·{" "}
+                  <Link to={`/circuits/${race.circuit_slug}`}>{race.circuit_name}</Link> ·{" "}
                   <Link to={`/seasons/${race.season}`}>{race.season} season</Link>
                 </div>
               </div>
@@ -843,7 +880,16 @@ export function RaceDetail() {
                 {
                   key: "status",
                   header: "Status",
-                  render: () => <PendingValue title="No finishing-status column in the source" />,
+                  // Was a hardcoded pending cell citing a missing column. The
+                  // payload carries the source's own status text ("Finished",
+                  // "+1 Lap", "Gearbox") on every row; only rows the
+                  // enrichment has not reached are genuinely unknown.
+                  render: (r) =>
+                    r.status ? (
+                      <span>{r.status}</span>
+                    ) : (
+                      <PendingValue title="Enrichment has not been loaded for this race" />
+                    ),
                 },
               ]}
             />
@@ -853,7 +899,7 @@ export function RaceDetail() {
           <div className="related mono">
             <span className="related__label">RELATED</span>
             <Link to={`/seasons/${race.season}`}>{race.season} season →</Link>
-            <Link to={`/circuits/${race.circuit_id}`}>{race.circuit_name} →</Link>
+            <Link to={`/circuits/${race.circuit_slug}`}>{race.circuit_name} →</Link>
             {race.results[0] && (
               <>
                 <Link to={`/drivers/${race.results[0].driver_slug}`}>{race.results[0].driver_name} →</Link>
@@ -862,8 +908,14 @@ export function RaceDetail() {
                 </Link>
               </>
             )}
+            {/* This read "Qualifying, fastest-lap and pit-stop data are
+                outside this dataset" on a page that renders all three: the
+                qualifying block, the fastest-lap award and the pit-stop
+                table are directly above it. Coverage windows differ, so the
+                note states them instead of denying the data exists. */}
             <span className="related__note">
-              Qualifying, fastest-lap and pit-stop data are outside this dataset.
+              Qualifying is complete from 2003, fastest laps from 2004 and pit stops from 2011.
+              Races before those seasons show the data as unavailable.
             </span>
           </div>
         </>

@@ -6,7 +6,7 @@ import sqlite3
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from .. import analytics, backends, schemas, supabase_repo
-from ..db import get_db
+from ..db import fetch_one_or_404, get_db
 
 router = APIRouter()
 
@@ -44,17 +44,21 @@ RACE_SELECT = """
 
 @router.get("/seasons", tags=["seasons"])
 def list_seasons(conn: sqlite3.Connection = Depends(get_db)):
-    return [
-        dict(row)
-        for row in conn.execute(
-            """
-            SELECT ra.season, COUNT(DISTINCT ra.id) AS races, COUNT(r.id) AS entries,
-                   COUNT(DISTINCT r.driver_id) AS drivers, COUNT(DISTINCT r.constructor_id) AS constructors
-            FROM races ra LEFT JOIN results r ON r.race_id = ra.id
-            GROUP BY ra.season ORDER BY ra.season DESC
-            """
-        )
-    ]
+    return backends.serve(
+        "seasons",
+        lambda: [
+            dict(row)
+            for row in conn.execute(
+                """
+                SELECT ra.season, COUNT(DISTINCT ra.id) AS races, COUNT(r.id) AS entries,
+                       COUNT(DISTINCT r.driver_id) AS drivers, COUNT(DISTINCT r.constructor_id) AS constructors
+                FROM races ra LEFT JOIN results r ON r.race_id = ra.id
+                GROUP BY ra.season ORDER BY ra.season DESC
+                """
+            )
+        ],
+        supabase_repo.seasons_index,
+    )
 
 
 @router.get("/seasons/{season}", tags=["seasons"])
@@ -76,12 +80,22 @@ def get_season(season: int, conn: sqlite3.Connection = Depends(get_db)):
     source carries no points column". Points have been ingested since; the
     standings are real and the caveat was simply out of date.
     """
-    summary = analytics.season_summary(conn, season)
+    def from_sqlite():
+        summary = analytics.season_summary(conn, season)
+        if summary is None:
+            return None
+        summary["races_list"] = [
+            dict(row) for row in conn.execute(f"{RACE_SELECT} WHERE ra.season = ? ORDER BY ra.round", [season])
+        ]
+        return summary
+
+    summary = backends.serve(
+        "season",
+        from_sqlite,
+        lambda: supabase_repo.season_summary_payload(season),
+    )
     if summary is None:
         raise HTTPException(status_code=404, detail=f"No races recorded for season {season}")
-    summary["races_list"] = [
-        dict(row) for row in conn.execute(f"{RACE_SELECT} WHERE ra.season = ? ORDER BY ra.round", [season])
-    ]
     return summary
 
 
@@ -93,7 +107,11 @@ def get_season_rounds(season: int, conn: sqlite3.Connection = Depends(get_db)):
     for -- the round still appears, rather than the calendar looking shorter
     than it was.
     """
-    rounds = analytics.season_rounds(conn, season)
+    rounds = backends.serve(
+        "season_rounds",
+        lambda: analytics.season_rounds(conn, season),
+        lambda: supabase_repo.season_rounds_payload(season),
+    )
     if not rounds:
         raise HTTPException(status_code=404, detail=f"No races recorded for season {season}")
     return {"season": season, "rounds": rounds}
@@ -107,20 +125,36 @@ def list_races(
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
 ):
-    where, params = "", []
-    if season is not None:
-        where += " AND ra.season = ?"
-        params.append(season)
+    def from_sqlite():
+        where, params = "", []
+        if season is not None:
+            where += " AND ra.season = ?"
+            params.append(season)
+        if circuit_id is not None:
+            where += " AND ra.circuit_id = ?"
+            params.append(circuit_id)
+        return [
+            dict(row)
+            for row in conn.execute(
+                f"{RACE_SELECT} WHERE 1=1{where} ORDER BY ra.season DESC, ra.round LIMIT ? OFFSET ?",
+                [*params, limit, offset],
+            )
+        ]
+
+    # circuit_id is store-local, so it is resolved to the portable slug before
+    # it can select rows in the other store. Passing the integer straight
+    # through would filter to a different circuit there.
+    circuit_slug = None
     if circuit_id is not None:
-        where += " AND ra.circuit_id = ?"
-        params.append(circuit_id)
-    return [
-        dict(row)
-        for row in conn.execute(
-            f"{RACE_SELECT} WHERE 1=1{where} ORDER BY ra.season DESC, ra.round LIMIT ? OFFSET ?",
-            [*params, limit, offset],
-        )
-    ]
+        circuit_slug = fetch_one_or_404(conn, "circuits", circuit_id)["slug"]
+
+    return backends.serve(
+        "races",
+        from_sqlite,
+        lambda: supabase_repo.race_summaries(
+            season_year=season, circuit_slug=circuit_slug, limit=limit, offset=offset,
+        ),
+    )
 
 
 @router.get("/races/{race_id}", tags=["races"])
@@ -134,6 +168,17 @@ def get_race(race_id: int, conn: sqlite3.Connection = Depends(get_db)):
     row = conn.execute(f"{RACE_SELECT} WHERE ra.id = ?", [race_id]).fetchone()
     if row is None:
         raise HTTPException(status_code=404, detail=f"No race with id {race_id}")
+
+    if backends.selected() == backends.SUPABASE:
+        # Addressed by (season, round), never by the id in the URL: race ids
+        # are store-local, so passing one through would return a different
+        # race. The SQLite lookup above is what resolves the id to that
+        # portable key -- and what produces the 404.
+        return backends.serve(
+            "race",
+            lambda: None,
+            lambda: supabase_repo.race_detail(row["season"], row["round"]),
+        )
 
     qualifying = analytics.qualifying_results(conn, race_id)
     sprint = analytics.sprint_results(conn, race_id)

@@ -16,7 +16,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from . import backends
+from . import backends, supabase_repo
 from .db import connect
 from .routers import analysis, analytics_router, calendar, entities
 
@@ -75,6 +75,40 @@ async def database_error(request: Request, exc: sqlite3.Error) -> JSONResponse:
     """
     log.exception("Database error on %s", request.url.path)
     return JSONResponse(status_code=503, content={"detail": "Data store unavailable. Retry shortly."})
+
+
+@app.exception_handler(supabase_repo.SupabaseError)
+async def supabase_error(request: Request, exc: Exception) -> JSONResponse:
+    """The Supabase leg's equivalent of the handler above.
+
+    Only sqlite3.Error was handled, so a Supabase outage escaped as a bare
+    500 "Internal Server Error" with no JSON body -- against the documented
+    contract (503, retryable, `{"detail"}`) and against the client, which
+    reads `detail` to tell a reader what to do. Verified by pointing
+    SUPABASE_URL at a dead host.
+
+    The message is deliberately generic and the real error goes to the log:
+    the URL and key live in the exception text.
+    """
+    log.exception("Supabase error on %s", request.url.path)
+    return JSONResponse(
+        status_code=503, content={"detail": "Data store unavailable. Retry shortly."}
+    )
+
+
+@app.exception_handler(backends.CapabilityMissing)
+async def capability_missing(request: Request, exc: Exception) -> JSONResponse:
+    """An endpoint the selected backend cannot serve.
+
+    501 rather than 503: retrying will not help, because nothing is broken --
+    this backend simply has no implementation. The distinction matters to a
+    client deciding whether to back off and try again.
+    """
+    log.warning("Capability missing on %s: %s", request.url.path, exc)
+    return JSONResponse(
+        status_code=501,
+        content={"detail": "This endpoint is not available on the active data store."},
+    )
 
 
 @app.get("/api/health", tags=["meta"])

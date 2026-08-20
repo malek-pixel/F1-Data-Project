@@ -74,6 +74,10 @@ class NamedStats(Stats):
     # should link on this.
     slug: str
     name: str
+    # Carried on the listing so the library card can render it without a
+    # request per row. Null only where the source has none for that entity --
+    # every driver and constructor in this dataset has one.
+    nationality: str | None = None
 
 
 class SeasonStats(Stats):

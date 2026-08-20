@@ -128,8 +128,25 @@ def test_enrichment_columns_exist_and_are_populated():
     for column in ("points", "grid", "laps", "status", "classification"):
         assert column in present, f"results lost its {column} column"
 
+    # The fastest-lap columns joined this table in migration 24. They were on
+    # the forbidden list above until then, correctly: Postgres had no source
+    # for them. It does now -- the enrichment SQLite already carried was
+    # loaded by backend/etl/backfill_fastest_lap.py -- so the rule that
+    # applies is the same one as for points and grid: present means
+    # populated, not a placeholder.
+    for column in ("fastest_lap_rank", "fastest_lap_number", "fastest_lap_time"):
+        assert column in present, f"results lost its {column} column"
+
+    _, enriched = repo.query(
+        "results", select="id", filters={"fastest_lap_rank": "not.is.null"},
+        limit=1, exact_count=True,
+    )
+    assert enriched, "fastest_lap_rank exists but no row carries a value"
+
     # Still forbidden: no source provides these, so they must not appear.
-    speculative = {"fastest_lap", "fastest_lap_time", "pit_stops", "tyre_compound"}
+    # `tyre_compound` belongs to practice_laps, which has a source; on a RACE
+    # result it would have none.
+    speculative = {"pit_stops", "tyre_compound", "race_time", "gap_to_winner"}
     assert not (speculative & present), "results gained a column with no source"
 
     # A column that exists must carry values. One NULL row would be enough to

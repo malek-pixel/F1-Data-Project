@@ -68,18 +68,45 @@ What the design asks for, versus what seven columns can support.
 ### Unavailable — deliberately not implemented
 
 Not estimated, not inferred, not filled with placeholders. Endpoints expose
-these through `/api/dataset/summary` as an explicit unavailable list.
+these through `/api/dataset/summary`, which **measures** availability by
+probing the database rather than reading a list. Only two fields are left:
 
-- Qualifying results, grid position, pole positions
-- Fastest laps
-- Finishing status → **DNF rate, finish rate, reliability**
-- Championship points, points-per-race, championship standings
-- Lap times, sector times, lap-by-lap timing
-- Pit stops, tyre compounds, telemetry
-- Sprint results
-- Car specifications (chassis, engine, power, weight, aero)
+- Telemetry
+- Car specifications (chassis, engine, power, weight, aero) — the `cars` table
+  exists and is deliberately empty; no source this project ingests supplies it
 
-Adding any of these requires new source columns first.
+Adding either requires new source columns first.
+
+#### What this list used to say
+
+Everything below was on the unavailable list above, and every item of it has
+since been ingested. The list was not updated, so the project's own
+methodology reference spent several ingestions telling readers that data it
+holds hundreds of thousands of rows of did not exist:
+
+Each line below records what the list *used to* claim, against what the
+database actually holds:
+
+- Qualifying results and grid position — used to be listed as absent; there are
+  9,577 qualifying rows, and `grid` is set on all 10,550 results.
+- Fastest laps — used to be listed as absent; 8,725 results carry a
+  fastest-lap time, covering 2004–2025.
+- Finishing status, and the DNF and finish rates built on it — used to be
+  listed as absent; `classification` is set on all 10,550 results.
+- Championship points and standings — used to be listed as absent; `points` is
+  set on all 10,550 results and standings are served for all 26 seasons.
+- Race lap timing, lap by lap — used to be listed as absent; there are 552,138
+  lap timings across all 503 races.
+- Sector times and tyre compounds — used to be listed as absent; 211,257
+  practice laps carry them, for practice sessions only.
+- Pit stops — used to be listed as absent; 12,192 rows, 2011 onward.
+- Sprint results — used to be listed as absent; 480 rows, 2021 onward.
+
+The lesson is the one `backend/tests/test_no_stale_absence_claims.py` was
+written for and this file evaded: a claim about absent data has to be checked
+against the data, because prose cannot fail a build. Pole positions remain
+absent as such — qualifying P1 is counted and labelled `qualifying_p1`, which
+is not the same statistic (see below).
 
 > The design mockup's own Methodology screen describes a richer pipeline
 > (nightly Ergast ingest, DuckDB warehouse, grid position and fastest lap

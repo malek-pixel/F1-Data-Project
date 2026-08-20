@@ -37,7 +37,13 @@ export interface Stats {
 
 export interface NamedStats extends Stats {
   id: number;
+  /** The portable identifier. `id` is store-local -- it comes from a different
+   *  sequence in the Postgres materialisation, so the same number is a
+   *  different entity there. Link and compare with this, never with `id`. */
+  slug: string;
   name: string;
+  /** Carried on listings so a card can show it without a request per row. */
+  nationality: string | null;
 }
 
 export interface SeasonStats extends Stats {
@@ -232,13 +238,38 @@ export interface RaceDetail extends Race {
 
 export interface DriverDetail {
   id: number;
+  /** Portable identifier -- see NamedStats.slug. Link with this, not `id`. */
+  slug: string;
   name: string;
+  /** Descriptors. Null means the source has no value for THIS driver -- the
+   *  columns themselves are populated (all 129 have a nationality; 62 have a
+   *  permanent number), so the UI renders per-driver, never a blanket
+   *  "not in the source". */
+  nationality: string | null;
+  permanent_number: number | null;
+  abbreviation: string | null;
+  date_of_birth: string | null;
   stats: Stats;
   constructors: ConstructorSpell[];
 }
 
+/** Career qualifying summary. `qualifying_p1` counts fastest-qualifier
+ *  classifications and is deliberately NOT called poles: the two differ, and
+ *  the field name says what was measured. */
+export interface DriverQualifying {
+  entries: number;
+  qualifying_p1: number | null;
+  avg_qualifying_position: number | null;
+  best_qualifying_position: number | null;
+  coverage_from: number | null;
+  coverage_note: string;
+  qualifying_p1_note: string;
+}
+
 export interface ConstructorDetail {
   id: number;
+  /** Portable identifier -- see NamedStats.slug. Link with this, not `id`. */
+  slug: string;
   name: string;
   stats: Stats;
   seasons: SeasonStats[];

@@ -34,6 +34,11 @@ SEARCHED_SUFFIXES = {".py", ".md", ".ts", ".tsx"}
 SKIPPED_DIRS = {
     "node_modules", ".git", "__pycache__", "dist", "build",
     "data", "archive", ".venv", "venv", "cache",
+    # Design briefs are dated inputs describing what was known when the design
+    # was commissioned, not claims this codebase makes about its own data.
+    # They are kept verbatim on purpose; rewriting them would falsify the
+    # record of what the design was actually drawn against.
+    "uploads",
 }
 
 # Phrase -> the query proving it false. A phrase is only listed here once the
@@ -47,6 +52,21 @@ FORBIDDEN_CLAIMS = {
     "no grid position": "SELECT COUNT(*) FROM results WHERE grid IS NOT NULL",
     "points dominance cannot be computed": "SELECT COUNT(*) FROM results WHERE points IS NOT NULL",
     "championship standings, lap times": "SELECT COUNT(*) FROM results WHERE points IS NOT NULL",
+    # Fourth recurrence, caught in the UI rather than by this file: the
+    # dataset summary kept a static "unavailable" tail after the lap,
+    # practice and fastest-lap ingestions landed, so the Home page told
+    # readers the tool could not show 552,138 rows of lap times. The tail is
+    # probed now; these phrases keep it from being written back.
+    #
+    # Phrased to match the UNQUALIFIED claim only. "The source publishes no
+    # fastest lap before 2004" is true and must keep being sayable, so the
+    # forbidden strings below are the list-entry forms that appeared in the
+    # dataset summary and in METHODOLOGY.md, not every sentence containing
+    # the words.
+    "lap times / sector times": "SELECT COUNT(*) FROM lap_times",
+    "lap times, sector times": "SELECT COUNT(*) FROM lap_times",
+    "lap times, lap-by-lap timing": "SELECT COUNT(*) FROM lap_times",
+    "pit stops, tyre compounds, telemetry": "SELECT COUNT(compound) FROM practice_laps",
 }
 
 # This file quotes every forbidden phrase by definition, and the checklist

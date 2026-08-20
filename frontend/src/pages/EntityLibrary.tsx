@@ -210,23 +210,26 @@ export function EntityLibrary({
                           AVG P <strong>{dec(row.avg_classified_position)}</strong>
                         </span>
                       </div>
-                      {/* The mockup's cards carry nationality / base and title
-                          counts. Neither is in the seven source columns, so the
-                          slot states that rather than quietly disappearing. */}
+                      {/* The mockup's cards carry nationality and a title
+                          count. Nationality is real and now carried on the
+                          listing -- this slot used to read "NAT —" under a
+                          tooltip saying it was not in the source, for a column
+                          every driver and constructor has. Titles are
+                          derivable from the standings but not computed yet,
+                          which is a different statement from unavailable. */}
                       <div className="gallery__stats mono" style={{ marginTop: 4 }}>
+                        {row.nationality ? (
+                          <span>
+                            NAT <strong>{row.nationality}</strong>
+                          </span>
+                        ) : (
+                          <span className="pending" title="No nationality recorded for this entity">
+                            NAT —
+                          </span>
+                        )}
                         <span
                           className="pending"
-                          title={
-                            kind === "drivers"
-                              ? "Nationality is not in results.csv -- Ergast drivers.csv would supply it"
-                              : "Team base is not in results.csv -- Ergast constructors.csv would supply it"
-                          }
-                        >
-                          {kind === "drivers" ? "NAT" : "BASE"} —
-                        </span>
-                        <span
-                          className="pending"
-                          title="Championship titles need a points column; results.csv has none"
+                          title="Points and standings exist; counting title-winning seasons is not built yet"
                         >
                           WDC —
                         </span>

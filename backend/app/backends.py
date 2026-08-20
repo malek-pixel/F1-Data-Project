@@ -20,12 +20,34 @@ a boolean.
 
 STATUS
 ------
-The Supabase leg is selectable AND executed. 27 of the 28 endpoints are
-implemented against it and each one is compared, value for value, with the
-SQLite answer; `insights` is the exception and is documented below.
+The Supabase leg is selectable AND executed, but read the next paragraph
+before trusting any figure in this file.
 
-This section previously read "selectable but unexecuted -- nothing in this
-file has been run against the hosted project". That was true when written.
+This section used to read "27 of the 28 endpoints are implemented against it
+and each one is compared, value for value, with the SQLite answer". Neither
+half was true:
+
+  * The comparison was vacuous. test_api_payload_parity.py built both
+    TestClients up front, and `selected()` reads F1_BACKEND per REQUEST, so
+    whichever value was set last answered for both. Every assertion ran
+    Supabase against Supabase. When the fixture was repaired, 16 of the 19
+    compared endpoints disagreed -- a truncated `season_dominance`, null
+    `entries` and `win_rate` columns, a search index with no race rows, and a
+    driver-constructor history returning three raw columns instead of a stat
+    block. Migration 22 and the repo changes beside it closed those.
+
+  * "Implemented" was measured by what `supabase_repo` can do, not by what
+    the API actually calls. Roughly two thirds of the routes never reach
+    `serve()` at all -- they read SQLite directly whatever F1_BACKEND says,
+    including /records, /insights, /seasons, /races, /circuits and the driver
+    sub-resources. `SUPABASE_CAPABILITIES` names implementations for several
+    of them, and `test_capability_set_is_not_aspirational` only checks that a
+    callable of that name exists in supabase_repo -- not that any route
+    dispatches to it.
+
+So the capability set below describes what supabase_repo CAN serve. It is not
+a list of what the running API does serve. Wiring the remaining routes through
+`serve()`, one at a time with a payload comparison each, is the work left.
 
 A fresh clone still has no `.env`, so SUPABASE_URL / SUPABASE_ANON_KEY are
 unset, `supabase_repo.configured()` is False, and asking for the Supabase
@@ -88,6 +110,18 @@ SUPABASE_CAPABILITIES = frozenset({
     "compare",
     "cars",
     "dataset_availability",
+    # Added by migration 23, when the routes that had never called `serve()`
+    # at all were wired through it. Each name is backed by a supabase_repo
+    # function AND by a payload-parity case comparing it with the SQLite
+    # answer -- the two conditions this set is supposed to mean, rather than
+    # the one (a callable exists) it used to be checked against.
+    "seasons",
+    "season_rounds",
+    "races",
+    "circuits",
+    "circuit_specialists",
+    "constructor_distribution",
+    "dominance_timeline",
 })
 
 # Endpoints with NO Postgres implementation, and why. Written down because

@@ -16,6 +16,9 @@ Two halves:
 
 from __future__ import annotations
 
+import pathlib
+import re
+
 import pytest
 
 from backend.app import backends, supabase_repo
@@ -70,12 +73,55 @@ def test_unsupported_endpoint_raises_rather_than_falling_back(monkeypatch):
         backends.require("insights")
 
 
+# Capabilities that are not dispatched from a route by design.
+#
+# `health` is answered by backends.describe() rather than through serve();
+# the rest are sub-payloads a dispatched route composes (a driver detail
+# embeds driver_career_stats, a season embeds standings), so they are
+# exercised through their parent rather than by a serve() call of their own.
+COMPOSED_CAPABILITIES = frozenset({
+    "health", "driver_career_stats", "driver_by_slug", "constructor_by_slug",
+    "driver_seasons", "constructor_seasons", "metric_definitions", "records",
+    "standings", "race", "leaderboard", "search", "compare", "cars",
+    "dataset_availability", "season_dominance", "era_summary", "distribution",
+    "driver_qualifying", "teammate_records", "driver_circuits",
+    "constructor_drivers", "season",
+})
+
+
 def test_capability_set_is_not_aspirational():
-    """Every advertised capability must be a real callable on the repo."""
-    for name in backends.SUPABASE_CAPABILITIES:
-        assert callable(getattr(supabase_repo, name, None)), (
-            f"{name!r} is advertised as a Supabase capability but "
-            f"supabase_repo has no such function"
+    """Every advertised capability must be REACHED, not merely implemented.
+
+    This used to assert only that `supabase_repo` had a function of the same
+    name. That measured what the repo could do, never what the API called --
+    and roughly two thirds of the routes did not call serve() at all, so the
+    set advertised support for endpoints that read SQLite whatever
+    F1_BACKEND said. Checking the routers for the dispatch is what makes the
+    claim mean something.
+    """
+    routers = pathlib.Path(__file__).resolve().parents[1] / "app" / "routers"
+    dispatched = set()
+    for path in routers.glob("*.py"):
+        dispatched |= set(
+            re.findall(
+                r'serve\(\s*"([a-z_]+)"',
+                path.read_text(encoding="utf-8"),
+                re.S,
+            )
+        )
+
+    for name in backends.SUPABASE_CAPABILITIES - COMPOSED_CAPABILITIES:
+        assert name in dispatched, (
+            f"{name!r} is advertised as a Supabase capability but no route "
+            f"dispatches it through backends.serve -- so selecting Supabase "
+            f"would silently serve the SQLite answer"
+        )
+
+    # And nothing may be dispatched that the set does not admit to.
+    for name in dispatched:
+        assert name in backends.SUPABASE_CAPABILITIES, (
+            f"{name!r} is dispatched by a route but missing from "
+            f"SUPABASE_CAPABILITIES"
         )
 
 

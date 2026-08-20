@@ -131,15 +131,25 @@ def list_constructors(
     # The browsable index is the one place hidden constructors are withheld.
     # Their detail pages still resolve by id, and every aggregate still counts
     # them -- see analytics.HIDDEN_CONSTRUCTORS.
-    return analytics.leaderboard(
-        conn,
-        "constructor",
-        sort=sort,
-        search=search,
-        min_entries=min_entries,
-        exclude_hidden=True,
-        **page,
-        **seasons,
+    filtered = search or seasons["season_from"] or seasons["season_to"]
+    if filtered:
+        # Search and the season range have no Supabase implementation, so a
+        # request using them is served by SQLite even when Supabase is
+        # selected. `serve` is simply not reached, so nothing claims to be
+        # Supabase-backed when it is not.
+        return analytics.leaderboard(
+            conn, "constructor", sort=sort, search=search, min_entries=min_entries,
+            exclude_hidden=True, **page, **seasons,
+        )
+    return backends.serve(
+        "leaderboard",
+        lambda: analytics.leaderboard(
+            conn, "constructor", sort=sort, min_entries=min_entries,
+            exclude_hidden=True, **page, **seasons,
+        ),
+        lambda: supabase_repo.leaderboard_page(
+            "constructor", sort=sort, min_entries=min_entries, exclude_hidden=True, **page,
+        ),
     )
 
 
@@ -173,7 +183,15 @@ def get_constructor_drivers(
 ):
     """Driver contribution: share of the team's entries, wins and podiums."""
     row = fetch_one_or_404(conn, "constructors", constructor_id)
-    return analytics.constructor_driver_contribution(conn, row["id"], season)
+    if season is not None:
+        # The contribution view covers a whole career; a season filter needs a
+        # second view. Served from SQLite and not claimed as Supabase-backed.
+        return analytics.constructor_driver_contribution(conn, row["id"], season)
+    return backends.serve(
+        "constructor_drivers",
+        lambda: analytics.constructor_driver_contribution(conn, row["id"], None),
+        lambda: supabase_repo.constructor_driver_contribution(row["slug"]),
+    )
 
 
 # --------------------------------------------------------------------------
@@ -212,11 +230,19 @@ def list_circuits(
                ) AS top_winner_wins
         FROM circuits c
     """
-    params: list = []
+    def from_sqlite():
+        params: list = []
+        clause = ""
+        if search:
+            clause = " WHERE c.name LIKE ? ESCAPE '\' OR c.country LIKE ? ESCAPE '\'"
+            params += [analytics.like_pattern(search)] * 2
+        return [dict(row) for row in conn.execute(sql + clause + " ORDER BY c.name", params)]
+
     if search:
-        sql += " WHERE c.name LIKE ? ESCAPE '\\' OR c.country LIKE ? ESCAPE '\\'"
-        params += [analytics.like_pattern(search)] * 2
-    return [dict(row) for row in conn.execute(sql + " ORDER BY c.name", params)]
+        # Circuit search has no Supabase implementation, so `serve` is simply
+        # not reached and nothing claims to be Supabase-backed when it is not.
+        return from_sqlite()
+    return backends.serve("circuits", from_sqlite, supabase_repo.circuits_list)
 
 
 @router.get("/circuits/{circuit_id}", tags=["circuits"])
@@ -224,11 +250,27 @@ def get_circuit(circuit_id: str, conn: sqlite3.Connection = Depends(get_db)):
     """One circuit, addressed by slug ("monza") or by legacy integer id."""
     row = fetch_one_or_404(conn, "circuits", circuit_id)
     resolved = row["id"]
-    return {
-        **dict(row),
-        "has_map": bool(row["has_map"]),
-        "stats": analytics.entity_stats(conn, "circuit", resolved),
-        "winners": analytics.circuit_winners(conn, resolved),
-        "top_drivers": analytics.leaderboard(conn, "driver", circuit_id=resolved, limit=10)["items"],
-        "top_constructors": analytics.leaderboard(conn, "constructor", circuit_id=resolved, limit=10)["items"],
-    }
+
+    def from_sqlite():
+        return {
+            **dict(row),
+            "has_map": bool(row["has_map"]),
+            # The listing carries `races` and the detail page renders it in three
+            # places -- the card subtitle, the header line and the RACES cell --
+            # but this payload never included it, so all three read as an em dash
+            # on every circuit. Counted here rather than derived from `winners`,
+            # which holds only the races that have a recorded winner.
+            "races": conn.execute(
+                "SELECT COUNT(*) FROM races WHERE circuit_id = ?", [resolved]
+            ).fetchone()[0],
+            "stats": analytics.entity_stats(conn, "circuit", resolved),
+            "winners": analytics.circuit_winners(conn, resolved),
+            "top_drivers": analytics.leaderboard(conn, "driver", circuit_id=resolved, limit=10)["items"],
+            "top_constructors": analytics.leaderboard(conn, "constructor", circuit_id=resolved, limit=10)["items"],
+        }
+
+    return backends.serve(
+        "circuit_by_slug",
+        from_sqlite,
+        lambda: supabase_repo.circuit_detail(row["slug"]),
+    )

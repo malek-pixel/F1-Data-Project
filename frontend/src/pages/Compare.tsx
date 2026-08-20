@@ -204,8 +204,11 @@ function StatsColumns({ left, right, title }: { left: Stats; right: Stats; title
         format={(v) => dec(v)}
       />
 
-      {/* What genuinely still has no source column. Each keeps its row and
-          says why, rather than vanishing from the comparison. */}
+      {/* Rows this comparison does not produce. The heading used to say "NO
+          SOURCE COLUMN", which was true for all three when written and is now
+          true for none of them -- poles are a definitional limit, fastest laps
+          are ingested but unaggregated, titles are derivable but not stored.
+          Each keeps its row and says which, rather than vanishing. */}
       <div
         className="mono"
         style={{
@@ -217,7 +220,7 @@ function StatsColumns({ left, right, title }: { left: Stats; right: Stats; title
           borderTop: "1px solid var(--border)",
         }}
       >
-        NOT COMPARABLE — NO SOURCE COLUMN
+        NOT COMPARED HERE
       </div>
       <ul className="pending-rows mono">
         {[
@@ -225,7 +228,14 @@ function StatsColumns({ left, right, title }: { left: Stats; right: Stats; title
           // only, and P1-in-qualifying is not the same as an official pole --
           // see the driver qualifying endpoint for the honest figure.
           ["POLES", "official pole counts are not reproducible from this source"],
-          ["FASTEST LAPS", "no fastest-lap column"],
+          // This row used to read "no fastest-lap column", which stopped being
+          // true when the enrichment landed: 8,725 results carry a fastest-lap
+          // time. The column exists; this comparison does not aggregate it yet,
+          // and that is a different statement.
+          [
+            "FASTEST LAPS",
+            "fastest-lap times are ingested (2004 onward) but not aggregated into this comparison yet",
+          ],
           ["TITLES", "championship titles are not stored; only per-season points"],
         ].map(([label, why]) => (
           <li key={label}>
@@ -248,6 +258,8 @@ export function Compare() {
   // than held only in memory.
   const [params, setParams] = useSearchParams();
   const kind: Kind = params.get("kind") === "constructors" ? "constructors" : "drivers";
+  // Slugs, not ids: an id means a different driver on a different backend, so
+  // a shared /compare link would silently show two other people.
   const leftId = params.get("left");
   const rightId = params.get("right");
 
@@ -255,24 +267,28 @@ export function Compare() {
   const [right, setRight] = useState<NamedStats | null>(null);
 
   // Rehydrate from the URL on load or when the link changes underneath us.
-  const leftLookup = useApi<{ id: number; name: string }>(
-    leftId && left?.id !== Number(leftId) ? `/${kind}/${leftId}` : null,
+  // The endpoint resolves a slug or a legacy id, so an old numeric bookmark
+  // still rehydrates.
+  const leftLookup = useApi<{ id: number; slug: string; name: string }>(
+    leftId && left?.slug !== leftId ? `/${kind}/${leftId}` : null,
   );
-  const rightLookup = useApi<{ id: number; name: string }>(
-    rightId && right?.id !== Number(rightId) ? `/${kind}/${rightId}` : null,
+  const rightLookup = useApi<{ id: number; slug: string; name: string }>(
+    rightId && right?.slug !== rightId ? `/${kind}/${rightId}` : null,
   );
   useEffect(() => {
-    if (leftLookup.data) setLeft({ id: leftLookup.data.id, name: leftLookup.data.name } as NamedStats);
+    if (leftLookup.data)
+      setLeft({ id: leftLookup.data.id, slug: leftLookup.data.slug, name: leftLookup.data.name } as NamedStats);
   }, [leftLookup.data]);
   useEffect(() => {
-    if (rightLookup.data) setRight({ id: rightLookup.data.id, name: rightLookup.data.name } as NamedStats);
+    if (rightLookup.data)
+      setRight({ id: rightLookup.data.id, slug: rightLookup.data.slug, name: rightLookup.data.name } as NamedStats);
   }, [rightLookup.data]);
   useEffect(() => {
     if (!leftId) setLeft(null);
     if (!rightId) setRight(null);
   }, [leftId, rightId]);
 
-  const write = (next: { kind?: Kind; left?: number | null; right?: number | null }) => {
+  const write = (next: { kind?: Kind; left?: string | null; right?: string | null }) => {
     const updated = new URLSearchParams(params);
     if (next.kind) updated.set("kind", next.kind);
     for (const side of ["left", "right"] as const) {
@@ -287,15 +303,17 @@ export function Compare() {
 
   const chooseLeft = (entity: NamedStats | null) => {
     setLeft(entity);
-    write({ left: entity?.id ?? null });
+    write({ left: entity?.slug ?? null });
   };
   const chooseRight = (entity: NamedStats | null) => {
     setRight(entity);
-    write({ right: entity?.id ?? null });
+    write({ right: entity?.slug ?? null });
   };
 
-  const ready = left && right && left.id !== right.id;
-  const state = useApi<Comparison>(ready ? `/compare/${kind}${qs({ left: left!.id, right: right!.id })}` : null);
+  const ready = left && right && left.slug !== right.slug;
+  const state = useApi<Comparison>(
+    ready ? `/compare/${kind}${qs({ left: left!.slug, right: right!.slug })}` : null,
+  );
 
   const switchKind = (next: Kind) => {
     setLeft(null);

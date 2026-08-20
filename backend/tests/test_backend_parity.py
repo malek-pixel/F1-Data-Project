@@ -183,6 +183,13 @@ def test_every_declared_capability_is_compared_somewhere(request):
         "standings", "races", "race", "leaderboard",
         "search", "season_dominance", "era_summary", "distribution",
         "compare", "cars", "dataset_availability",
+        # Compared at the HTTP level in test_api_payload_parity.py rather
+        # than function-by-function here. That suite is the stronger check of
+        # the two -- it compares the whole response a client actually
+        # receives, and it is the one that caught these four disagreeing when
+        # their routes were first wired through serve().
+        "season_rounds", "circuit_specialists",
+        "constructor_distribution", "dominance_timeline",
     }
     missing = backends.SUPABASE_CAPABILITIES - compared
     assert not missing, (

@@ -26,6 +26,8 @@ import sqlite3
 import statistics
 from collections import defaultdict
 
+from . import analytics
+
 # --------------------------------------------------------------------------
 # Sample-size thresholds
 #
@@ -465,7 +467,7 @@ def circuit_profile(conn: sqlite3.Connection, driver_id: int,
             "appearances": row["appearances"],
             "wins": row["wins"],
             "podiums": row["podiums"],
-            "avg_classified_position": round(row["avg_position"], 3),
+            "avg_classified_position": analytics.round_half_up(row["avg_position"], 3),
             "best_classified_position": row["best"],
             # Positive = better here than their career norm.
             "delta_vs_career": round(career - row["avg_position"], 3),
@@ -521,6 +523,21 @@ def circuit_specialists(conn: sqlite3.Connection, circuit_id: int,
 # Season dominance
 # --------------------------------------------------------------------------
 
+# The definition of the two shares, served verbatim by both backends. A
+# constant rather than a literal in each: supabase_repo returns this same
+# string, and a metric whose explanation differs by data store is a metric
+# explained twice.
+SEASON_DOMINANCE_BASIS = (
+    "win_share is wins / races held. points_share is the leader's points "
+    "divided by ALL points scored that season, race plus sprint, as awarded "
+    "under that season's rules. The two are NOT on the same scale and must "
+    "not be read as competing estimates of one quantity: twenty drivers "
+    "score points, so points_share has a floor far below 1.0 even in a "
+    "season one driver dominates -- 2023 is 0.86 win share against 0.24 "
+    "points share. Compare each across seasons, never against the other."
+)
+
+
 def season_dominance(conn: sqlite3.Connection, season: int) -> dict | None:
     """How concentrated a season's results were.
 
@@ -568,9 +585,9 @@ def season_dominance(conn: sqlite3.Connection, season: int) -> dict | None:
             {
                 "id": row["id"], "name": row["name"], "wins": row["wins"], "podiums": row["podiums"],
                 "entries": row["entries"],
-                "avg_classified_position": round(row["avg_position"], 3),
+                "avg_classified_position": analytics.round_half_up(row["avg_position"], 3),
                 "win_share": row["wins"] / races,
-                "points": round(row["points"], 2),
+                "points": analytics.round_half_up(row["points"], 2),
             }
             for row in rows
         ]
@@ -604,15 +621,7 @@ def season_dominance(conn: sqlite3.Connection, season: int) -> dict | None:
         "top_constructor_points_share": points_share(constructors),
         "drivers": drivers[:10],
         "constructors": constructors[:10],
-        "basis": (
-            "win_share is wins / races held. points_share is the leader's points "
-            "divided by ALL points scored that season, race plus sprint, as awarded "
-            "under that season's rules. The two are NOT on the same scale and must "
-            "not be read as competing estimates of one quantity: twenty drivers "
-            "score points, so points_share has a floor far below 1.0 even in a "
-            "season one driver dominates -- 2023 is 0.86 win share against 0.24 "
-            "points share. Compare each across seasons, never against the other."
-        ),
+        "basis": SEASON_DOMINANCE_BASIS,
     }
 
 
