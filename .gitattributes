@@ -12,6 +12,14 @@
 results.csv           -text
 backend/etl/circuit_map.csv -text
 
+# The same guarantee, for the source extracts the comment above already
+# claimed to cover but did not name. supabase_import.checksum() sha256s these
+# bytes and records the result in datasets.checksum, so normalising their line
+# endings would change a stored checksum without changing a single value.
+# They carry CRLF today and match the repository exactly; -text freezes that
+# rather than leaving it to whichever platform next runs `git add`.
+data/*.csv            -text
+
 # Migrations are checksummed byte-for-byte in CHECKSUMS.md5, so their line
 # endings are part of their identity. Two of them were committed from Windows
 # with CRLF while the repository stored LF, which made verify_migrations.py
