@@ -20,6 +20,18 @@ on:
     branches: ["**"]
   pull_request:
 
+# Least privilege, stated rather than inherited. Without this block the job
+# takes whatever the repository's default workflow permission happens to be,
+# which on a public repo can be read AND write to contents. Nothing here
+# writes: the jobs build, test and audit, and publish nothing. `contents: read`
+# is all they need, and it means a compromised dependency in the toolchain
+# cannot push to the repository with the automatic token.
+#
+# The trigger above is `pull_request`, deliberately not `pull_request_target`:
+# a fork's code must never run with access to this repository's token.
+permissions:
+  contents: read
+
 # A new push supersedes an in-flight run on the same ref.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

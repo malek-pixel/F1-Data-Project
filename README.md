@@ -332,3 +332,51 @@ points — have been **delivered**, and lap timings with them. What is left:
 
 Anything added here needs a source first. Nothing on this list will be
 estimated to make a page look finished.
+
+---
+
+## Ownership and licence
+
+**Copyright © 2026 malek-pixel. All rights reserved.**
+**This project is proprietary. It is not open source.**
+
+This repository is public so the work can be read, reviewed and assessed. That
+is not the same as a grant of rights: a public repository is not public domain,
+and the absence of an open-source licence means permissions are withheld, not
+that none apply. Full terms are in [LICENSE](LICENSE).
+
+In short:
+
+| | |
+|---|---|
+| **Read it, learn from it, cite it** | Yes, no permission needed |
+| **Fork or clone via GitHub** | Yes — GitHub's Terms of Service permit this for any public repo |
+| **Quote short excerpts with attribution** | Yes |
+| **Reuse the code in your own project** | **Ask first** — open an issue |
+| **Redistribute it, or build a product on it** | **Ask first** |
+
+Contributions are not accepted; data corrections as issues are welcome. See
+[CONTRIBUTING.md](CONTRIBUTING.md). Security reports go through
+[SECURITY.md](SECURITY.md), not public issues.
+
+### What is mine, and what is not
+
+The reservation of rights covers **my original work**: the ETL pipeline, the
+FastAPI backend and its analytics, the React frontend, the database migrations,
+the test suites, and the written documentation.
+
+It does **not** cover the following, which are third-party and carry their own
+terms:
+
+| Not mine to licence | Status |
+|---|---|
+| **Race and timing data** — `results.csv`, `data/jolpica_*.csv`, `data/fastf1_*.csv` | From the Jolpica-F1 / Ergast lineage and, via FastF1, Formula One's live-timing feed. Timing data remains the property of Formula 1. The committed CSVs are derived extracts, regenerable from source |
+| **Driver portraits** — `frontend/public/drivers` (129) | Third-party. **This repository records no source or licence for any of them.** Every image has a labelled fallback — verified: the application renders completely with all images removed |
+| **Car photographs** — `frontend/public/cars` (266) | As above. `docs/CAR_PHOTOS.md` notes that a public deployment needs a licensed source |
+| **Team logos** — `frontend/public/teams` (35) | Registered trademarks of the teams concerned. Trademark is not something a copyright licence can grant |
+| **The Formula 1 mark** — `frontend/public/f1-logo.png` | Registered trademark of Formula One Licensing BV. Used as a reference to the sport, not a claim of association |
+| **Circuit outlines** — 25 SVGs, duplicated in `frontend/public/circuits`, `design/assets/circuits` and `Assets F1/` | Third-party, provenance unrecorded |
+| **Dependencies** — `requirements.txt`, `frontend/package.json` | Each under its own open-source licence |
+
+This project is unofficial and is not associated with, endorsed by, or
+affiliated with Formula 1, the FIA, or any Formula 1 team.
