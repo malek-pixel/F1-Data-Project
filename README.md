@@ -122,7 +122,8 @@ Runtime frontend dependencies: `react`, `react-dom`, `react-router-dom`.
 
 ## Setup
 
-Requires Python 3.11+ and Node 18+.
+Requires Python 3.11+ and Node 20.19+ (or 22.12+). The Node floor is Vite 8's,
+not this project's; CI pins 22.
 
 ```bash
 # 1. Build the database from source (idempotent, ~1s)

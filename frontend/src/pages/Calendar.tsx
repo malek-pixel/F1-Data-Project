@@ -1,4 +1,5 @@
 import { useState } from "react";
+import type { ReactNode } from "react";
 import { Link, useParams } from "react-router-dom";
 import { DataTable } from "../components/DataTable";
 import { Async } from "../components/States";
@@ -14,6 +15,7 @@ import {
   PendingCell,
   PendingValue,
   Segmented,
+  UnknownCell,
 } from "../components/ui";
 import { useApi, useDebounced } from "../hooks/useApi";
 import { count, useDataset } from "../hooks/useDataset";
@@ -140,6 +142,40 @@ export function SeasonIndex() {
   );
 }
 
+/**
+ * Pick the right cell for a standings figure: loading, failed, genuinely
+ * absent, or present.
+ *
+ * These two cells used to test `standings.data?.[...]` alone, which collapses
+ * four states into two. A failed request has no data, so it fell into the same
+ * branch as a season the source has no standings for -- and the page told the
+ * reader "No standings recorded for this season" about 2022, 2024 and 2025.
+ * That is a false claim about the data, produced by an error the reader had
+ * already been shown elsewhere on the page. Retry made it worse rather than
+ * better: it refetched the section that owns the button and left these cells
+ * asserting an absence that had never been true.
+ *
+ * The order below is the fix. Absence is only claimed once the request has
+ * actually succeeded and come back without a leader.
+ */
+function standingsCell<T>(
+  label: string,
+  state: { loading: boolean; error: unknown },
+  value: T | undefined,
+  render: (value: T) => ReactNode,
+): ReactNode {
+  if (value !== undefined) return render(value);
+  if (state.loading) return <UnknownCell label={label} why="Loading standings…" />;
+  if (state.error)
+    return (
+      <UnknownCell
+        label={label}
+        why="Standings could not be loaded. The season's standings exist — this is a loading failure, not missing data."
+      />
+    );
+  return <PendingCell label={label} why="No standings recorded for this season" />;
+}
+
 export function SeasonDetail() {
   const { season } = useParams();
   const [tab, setTab] = useState<"drivers" | "constructors">("drivers");
@@ -196,38 +232,38 @@ export function SeasonDetail() {
                     wins then podiums, and the official countback rule is not
                     implemented, so this is the points leader rather than an
                     adjudicated title. */}
-                {standings.data?.drivers?.[0] ? (
+                {standingsCell("WDC · POINTS LEADER", standings, standings.data?.drivers?.[0], (leader) => (
                   <Cell
                     label="WDC · POINTS LEADER"
-                    value={standings.data.drivers[0].name}
-                    note={`${num(standings.data.drivers[0].points)} pts · ties not adjudicated by countback`}
+                    value={leader.name}
+                    note={`${num(leader.points)} pts · ties not adjudicated by countback`}
                   />
-                ) : (
-                  <PendingCell label="WDC · POINTS LEADER" why="No standings recorded for this season" />
-                )}
-                {standings.data?.constructors?.[0] ? (
-                  <Cell
-                    label="WCC · POINTS LEADER"
-                    value={standings.data.constructors[0].name}
-                    /* A season carrying a championship penalty says so here.
-                       Without it, 2007 reads as "Ferrari, 204" with no sign
-                       that McLaren scored 218 and were excluded -- which is
-                       the one thing a reader who knows that season will look
-                       for, and its absence makes the number look wrong rather
-                       than penalised. */
-                    note={(() => {
-                      const table = standings.data.constructors;
-                      const lead = table[0];
-                      const penalised = table.find((row) => row.penalty);
-                      const base = `${num(lead.points)} pts · ties not adjudicated by countback`;
-                      if (!penalised) return base;
-                      return penalised.penalty!.excluded
-                        ? `${num(lead.points)} pts · ${penalised.name} excluded (scored ${num(penalised.penalty!.points_scored)})`
-                        : `${num(lead.points)} pts · ${penalised.name} −${num(penalised.penalty!.points_deducted)} penalty`;
-                    })()}
-                  />
-                ) : (
-                  <PendingCell label="WCC · POINTS LEADER" why="No standings recorded for this season" />
+                ))}
+                {standingsCell(
+                  "WCC · POINTS LEADER",
+                  standings,
+                  standings.data?.constructors?.length ? standings.data.constructors : undefined,
+                  (table) => (
+                    <Cell
+                      label="WCC · POINTS LEADER"
+                      value={table[0].name}
+                      /* A season carrying a championship penalty says so here.
+                         Without it, 2007 reads as "Ferrari, 204" with no sign
+                         that McLaren scored 218 and were excluded -- which is
+                         the one thing a reader who knows that season will look
+                         for, and its absence makes the number look wrong rather
+                         than penalised. */
+                      note={(() => {
+                        const lead = table[0];
+                        const penalised = table.find((row) => row.penalty);
+                        const base = `${num(lead.points)} pts · ties not adjudicated by countback`;
+                        if (!penalised) return base;
+                        return penalised.penalty!.excluded
+                          ? `${num(lead.points)} pts · ${penalised.name} excluded (scored ${num(penalised.penalty!.points_scored)})`
+                          : `${num(lead.points)} pts · ${penalised.name} −${num(penalised.penalty!.points_deducted)} penalty`;
+                      })()}
+                    />
+                  ),
                 )}
               </CellGrid>
             </Panel>

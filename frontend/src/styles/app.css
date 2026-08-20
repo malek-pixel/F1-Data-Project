@@ -1399,6 +1399,23 @@ table.data th.num {
   .searchfield__box {
     padding: 9px 10px;
   }
+  /* The buttons above already take a 44px floor on touch; the fields were
+     missed, so the search input measured 26px tall -- under the guideline on
+     the one control a phone user is most likely to aim at.
+
+     The floor has to go on the INPUT, not on its wrapper. Growing the box
+     alone just pads it: a tap in that padding lands on the div and focuses
+     nothing, so the real target stays 26px and only looks fixed. Same
+     padding/negative-margin trick the clear button above already uses -- the
+     hit box grows, the text stays exactly where it was. */
+  .searchfield__input {
+    padding: 11px 0;
+    margin: -11px 0;
+  }
+  .input,
+  .select {
+    min-height: 44px;
+  }
 }
 .segmented__btn:last-child {
   border-right: 0;

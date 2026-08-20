@@ -157,13 +157,13 @@ hand it to every fork's pull request.
 
 | Check | Result |
 |---|---|
-| Backend tests | **381 passed** locally (244 in CI + 138 Supabase-gated skips) |
-| Frontend tests | **49 passed** |
-| Data integrity audit | **38 checks: 0 failed**, 2 warned |
+| Backend tests | **393 passed** locally, 1 skipped (Supabase leg runs when credentials are present; CI runs the SQLite leg) |
+| Frontend tests | **59 passed** |
+| Data integrity audit | **44 checks: 0 failed**, 2 warned (both upstream omissions) |
 | Migration checksums | **24/24 match** |
-| Production build | Clean; 335 kB main chunk (108 kB gzip) |
+| Production build | Clean; 343 kB main chunk (111 kB gzip) |
 | Database reproducibility | Byte-identical across three rebuilds |
-| `pip-audit` / `npm audit` | Python clean; 2 unreachable react-router advisories |
+| `pip-audit` / `npm audit` | Both clean — **0 vulnerabilities**, with and without `--omit=dev` |
 
 ---
 
@@ -180,10 +180,6 @@ hand it to every fork's pull request.
   taken first; recovery procedure is in `docs/OPERATIONS.md` §2.
 - **The Supabase leg is verified locally only.** Its parity tests skip in CI by
   design.
-- **`react-router` carries two moderate advisories.** Neither is reachable —
-  the open-redirect needs an attacker-controlled `to` and every navigation
-  target is a database-derived slug; the other is SSR-only and this is a client
-  SPA. Fixing requires a v6→v7 major upgrade.
 - **Not tested on Firefox or Safari**, and not tested with a real screen reader
   — ARIA semantics were verified programmatically, which is not the same thing.
 - **`cars` and `engines` tables are deliberately empty.** No source ingested;

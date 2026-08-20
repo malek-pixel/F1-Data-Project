@@ -276,15 +276,29 @@ audit, the migration checksums and the production build on every push.
 
 ### Standing advisory assessments
 
-`npm audit --omit=dev` reports findings; it does not assess them. These have
-been assessed and deliberately not acted on. Recorded here so the next monthly
-run does not re-open a settled question — and so that "still 2 moderate" is
-recognisable as the known state rather than read as new.
+`npm audit` reports findings; it does not assess them. Assessments that were
+deliberately not acted on are recorded here, so the next monthly run does not
+re-open a settled question.
 
-| Advisory | Package | Assessment |
-|---|---|---|
-| [GHSA-337j-9hxr-rhxg](https://github.com/advisories/GHSA-337j-9hxr-rhxg) — arbitrary constructor injection via `deserializeErrors()` | `react-router` / `react-router-dom` 6.30.4 (2 moderate) | **Not reachable.** The vulnerable path runs during **SSR hydration**. This is a client-only SPA: `src/main.tsx` calls `createRoot`, never `hydrateRoot`; there is no SSR config, no `StaticRouter`, and no server render anywhere in the build. The advisory's fixed range begins above 7.17.0, so remediating means a **major** upgrade from react-router 6 to 7 — a breaking API change, taken to close a path this app does not execute. Re-assess if the app ever gains server rendering, or if a 6.x patch is published. |
+**The table is currently empty: `npm audit` reports 0 vulnerabilities, with
+and without `--omit=dev`.** There is nothing being tolerated.
 
-Re-check this table whenever `npm audit` output changes shape, and delete a row
-the moment its reasoning stops holding. A stale exemption is worse than no
+The two `react-router` advisories that used to sit here were closed at the
+release-candidate gate by upgrading react-router 6 → 7, rather than by keeping
+the exemption. The reasoning that had justified waiting — the vulnerable
+`deserializeErrors()` path only runs during SSR hydration, and this is a
+client-only SPA that calls `createRoot`, never `hydrateRoot` — still held. It
+was simply cheaper to take the major than to keep explaining it: the app uses
+only the stable core API (`BrowserRouter`, `Routes`, `Route`, `Link`,
+`NavLink`, `Outlet`, `useNavigate`, `useLocation`, `useParams`,
+`useSearchParams`, `MemoryRouter`), all unchanged in 7, and the upgrade landed
+with the full suite green.
+
+The dev toolchain (`vite` 5 → 8, `vitest` 2 → 4, `@vitejs/plugin-react` 4 → 6)
+was upgraded in the same pass. Those advisories never shipped to a browser —
+they affect the dev server and test runner — but leaving a *critical* line in
+`npm audit` output trains the next reader to skim past it.
+
+Re-check this section whenever `npm audit` output changes shape, and delete a
+row the moment its reasoning stops holding. A stale exemption is worse than no
 exemption, because it silences a real finding.

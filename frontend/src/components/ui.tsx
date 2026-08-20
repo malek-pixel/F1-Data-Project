@@ -236,6 +236,32 @@ export function PendingCell({ label, why }: { label: string; why: string }) {
   );
 }
 
+/**
+ * A cell whose value could not be LOADED -- which is not the same thing as a
+ * value the dataset does not carry, and must never be rendered as one.
+ *
+ * `PendingCell` makes a claim about the source ("no standings recorded for
+ * this season"). When a request has failed, that claim is false: the standings
+ * exist and we simply could not fetch them. Saying "to be added" there told
+ * readers that 2022, 2024 and 2025 had no championship, which is exactly the
+ * kind of fabricated absence this project refuses everywhere else.
+ *
+ * So this state says the opposite: the value is unknown right now, and the
+ * reason is ours, not the data's.
+ */
+export function UnknownCell({ label, why }: { label: string; why: string }) {
+  return (
+    <div className="kpi kpi--pending">
+      <div className="kpi__label mono">{label}</div>
+      <div className="kpi__value-row">
+        <div className="kpi__value mono kpi__value--pending">—</div>
+        <div className="kpi__sub mono">unavailable</div>
+      </div>
+      <div className="kpi__note">{why}</div>
+    </div>
+  );
+}
+
 /** Inline "not in the dataset" marker for table cells. */
 export function PendingValue({ title }: { title?: string }) {
   return (

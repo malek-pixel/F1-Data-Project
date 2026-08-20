@@ -76,9 +76,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Vite 8 and @vitejs/plugin-react 6 declare `^20.19.0 || >=22.12.0`.
+      # A bare "20" resolves to whatever the runner's latest 20.x happens to
+      # be, which satisfies that today and silently stops satisfying it if the
+      # runner ever pins an earlier 20.x. 22 is unambiguous.
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
