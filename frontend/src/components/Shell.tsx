@@ -1,4 +1,6 @@
 import { NavLink, Outlet, useLocation } from "react-router-dom";
+
+import { ErrorBoundary } from "./ErrorBoundary";
 import { CommandPalette, useCommandPalette } from "./CommandPalette";
 import { Dock, type DockItem } from "./Dock";
 import { DynamicIsland, type IslandState } from "./DynamicIsland";
@@ -156,9 +158,15 @@ export function Shell() {
           </div>
 
           <main id="main" className="main" tabIndex={-1}>
-            <PageTransition>
-              <Outlet />
-            </PageTransition>
+            {/* Inside the shell, not around it: a render failure on one
+                screen leaves the navigation, search and dataset banner intact,
+                so the reader can leave without reloading. Keyed on pathname so
+                the error clears when they do. */}
+            <ErrorBoundary resetKey={pathname}>
+              <PageTransition>
+                <Outlet />
+              </PageTransition>
+            </ErrorBoundary>
 
             <footer className="page-foot mono">
               <span>SOURCE · results.csv</span>

@@ -194,9 +194,22 @@ export function Home() {
                   </div>
                   {teams.map((row) => (
                     <Link key={row.id} to={`/constructors/${row.slug}`} className="standings__row" role="row">
-                      <span className="mono standings__rank">{row.position}</span>
+                      {/* An excluded team has no championship position -- the
+                          FIA's table marks it EX rather than ranking it last.
+                          Rendering the derived rank here would state a
+                          classification that never existed. */}
+                      <span className="mono standings__rank">{row.penalty?.excluded ? "EX" : row.position}</span>
                       <span className="standings__flag" style={{ background: colourFor(row.name, teamOrder) }} />
-                      <span className="standings__name">{row.name}</span>
+                      <span className="standings__name">
+                        {row.name}
+                        {row.penalty && (
+                          <span className="mono standings__sub" title={row.penalty.evidence}>
+                            {row.penalty.excluded
+                              ? `excluded · scored ${num(row.penalty.points_scored)}`
+                              : `−${num(row.penalty.points_deducted)} penalty · scored ${num(row.penalty.points_scored)}`}
+                          </span>
+                        )}
+                      </span>
                       <span className="standings__share" title={`${row.points} of ${leadPoints} leader points`}>
                         <span
                           style={{

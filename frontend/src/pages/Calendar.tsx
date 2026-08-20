@@ -209,7 +209,22 @@ export function SeasonDetail() {
                   <Cell
                     label="WCC · POINTS LEADER"
                     value={standings.data.constructors[0].name}
-                    note={`${num(standings.data.constructors[0].points)} pts · ties not adjudicated by countback`}
+                    /* A season carrying a championship penalty says so here.
+                       Without it, 2007 reads as "Ferrari, 204" with no sign
+                       that McLaren scored 218 and were excluded -- which is
+                       the one thing a reader who knows that season will look
+                       for, and its absence makes the number look wrong rather
+                       than penalised. */
+                    note={(() => {
+                      const table = standings.data.constructors;
+                      const lead = table[0];
+                      const penalised = table.find((row) => row.penalty);
+                      const base = `${num(lead.points)} pts · ties not adjudicated by countback`;
+                      if (!penalised) return base;
+                      return penalised.penalty!.excluded
+                        ? `${num(lead.points)} pts · ${penalised.name} excluded (scored ${num(penalised.penalty!.points_scored)})`
+                        : `${num(lead.points)} pts · ${penalised.name} −${num(penalised.penalty!.points_deducted)} penalty`;
+                    })()}
                   />
                 ) : (
                   <PendingCell label="WCC · POINTS LEADER" why="No standings recorded for this season" />

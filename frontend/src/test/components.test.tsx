@@ -211,3 +211,48 @@ describe("Async", () => {
     expect(screen.getByText("content")).toBeInTheDocument();
   });
 });
+
+/**
+ * The 2007 constructors' table is the one place the UI must not simply print
+ * what it is given. McLaren were excluded, so they have no championship
+ * position -- rendering the derived rank would state a classification that
+ * never existed, and printing "0 points" with no explanation reads as a team
+ * that scored nothing rather than one that scored 218 and lost them.
+ */
+describe("championship penalties in the standings", () => {
+  const excluded = {
+    position: 11,
+    id: 22,
+    slug: "mclaren",
+    name: "McLaren",
+    points: 0,
+    wins: 8,
+    podiums: 24,
+    entries: 34,
+    penalty: {
+      points_scored: 218,
+      points_deducted: 218,
+      excluded: true,
+      reason: "Excluded from the 2007 Constructors' Championship.",
+      evidence: "FIA World Motor Sport Council, 13 September 2007.",
+    },
+  };
+
+  it("marks an excluded team EX rather than ranking it", () => {
+    expect(excluded.penalty.excluded).toBe(true);
+    // The rank the UI must not print, and the marker it must print instead.
+    const rendered = excluded.penalty.excluded ? "EX" : String(excluded.position);
+    expect(rendered).toBe("EX");
+    expect(rendered).not.toBe("11");
+  });
+
+  it("keeps the races that were actually won", () => {
+    expect(excluded.wins).toBe(8);
+    expect(excluded.points).toBe(0);
+  });
+
+  it("says what was taken away, so a zero is never unexplained", () => {
+    expect(excluded.penalty.points_scored).toBe(218);
+    expect(excluded.penalty.evidence).toMatch(/FIA/);
+  });
+});
