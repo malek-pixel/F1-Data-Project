@@ -125,7 +125,14 @@ export function Shell() {
             ) : (
               <span className="bar__scope">ANALYSIS · loading coverage…</span>
             )}
-            <span className="bar__source">SOURCE · results.csv · Ergast-derived</span>
+            {/* Two providers, named. This used to read "results.csv ·
+                Ergast-derived", which was true when the whole dataset was one
+                seven-column file and understates it now: points, grid,
+                status, qualifying, sprints, pit stops and lap timings come
+                from Jolpica-F1, and practice timing from FastF1. Attributing
+                all of it to one CSV in the most-read line in the app is both
+                inaccurate and short of what those sources are owed. */}
+            <span className="bar__source">SOURCE · Jolpica-F1 (Ergast lineage) · FastF1</span>
             <DynamicIsland state={island} />
           </div>
 
@@ -169,7 +176,7 @@ export function Shell() {
             </ErrorBoundary>
 
             <footer className="page-foot mono">
-              <span>SOURCE · results.csv</span>
+              <span>SOURCE · Jolpica-F1 · FastF1</span>
               {info && (
                 <>
                   <span>

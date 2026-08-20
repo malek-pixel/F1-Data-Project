@@ -241,12 +241,14 @@ Spot-checked against known F1 history:
 
 Spot checks are not verification, though, and are not relied on as such.
 `python -m backend.etl.crossvalidate` checks the dataset against Jolpica-F1
-race by race — three requests per season, cached on disk:
+race by race — three requests per season, cached on disk (the session timetable rides along
+in a response already being fetched, so it costs nothing extra):
 
 | Checked | Scope | Result |
 |---|---|---|
 | Winner, winning constructor, date, race name | 503 races | 0 discrepancies |
 | Qualifying P1 | 459 poles (the source itself is partial before 2003) | 0 discrepancies |
+| Weekend session timetable | 1,596 sessions, date and start time | 0 discrepancies |
 | Circuit identity | 39 circuits, as a 1:1 mapping | 0 discrepancies |
 
 Circuits are checked as a **bijection**, not by name, because names

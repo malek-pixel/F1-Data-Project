@@ -463,7 +463,7 @@ def coverage_matrix(conn: sqlite3.Connection) -> list[dict]:
                    "SELECT MIN(ra.season), MAX(ra.season) FROM sessions s"
                    " JOIN races ra ON ra.id = s.race_id",
                    "none loaded")
-         + " (weekend timetable only, not practice results)", _STRUCTURAL),
+         + " (weekend timetable only, not practice results)", _VALIDATED),
     ]
 
     rows = [

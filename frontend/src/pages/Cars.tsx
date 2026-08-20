@@ -61,7 +61,7 @@ function CarCard({ car, team }: { car: CarSeason; team: string }) {
           <div className="car-card__name">
             {team} <span className="mono">{car.season}</span>
           </div>
-          <div className="mono car-card__chassis" title="No chassis-designation column in results.csv">
+          <div className="mono car-card__chassis" title="No chassis designation in any source this project ingests">
             CHASSIS — to be added
           </div>
         </div>

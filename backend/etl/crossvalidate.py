@@ -74,6 +74,7 @@ from pathlib import Path
 import requests
 
 from backend.app.db import DB_PATH, connect
+from backend.etl import build_sessions
 
 API = "https://api.jolpi.ca/ergast/f1"
 CACHE = Path(__file__).resolve().parents[2] / "data" / "cache"
@@ -222,6 +223,94 @@ def fetch_season_circuits(season: int, refresh: bool = False) -> list[dict]:
     ]
     path.write_text(json.dumps(rows, indent=1, ensure_ascii=False), encoding="utf-8")
     return rows
+
+
+def fetch_season_sessions(season: int, refresh: bool = False) -> list[dict]:
+    """The weekend timetable of every round in `season`. Cached on disk.
+
+    Free, in network terms: the session blocks ride along in the same /races
+    response the circuit check already fetches, so this closes a whole
+    dataset's verification gap for no extra request.
+    """
+    CACHE.mkdir(parents=True, exist_ok=True)
+    path = CACHE / f"jolpica_{season}_sessions.json"
+    if path.exists() and not refresh:
+        return json.loads(path.read_text(encoding="utf-8"))
+
+    races = _fetch_season(season, "races")
+    rows = []
+    for race in races:
+        for source_key, code in build_sessions.SESSION_KEYS.items():
+            block = race.get(source_key)
+            if not block or not block.get("date"):
+                continue
+            rows.append(
+                {
+                    "round": int(race["round"]),
+                    "session": code,
+                    "date": block["date"],
+                    "time": block.get("time") or "",
+                }
+            )
+    path.write_text(json.dumps(rows, indent=1, ensure_ascii=False), encoding="utf-8")
+    return rows
+
+
+def local_sessions(conn, season: int) -> dict[tuple[int, str], tuple[str, str]]:
+    rows = conn.execute(
+        """
+        SELECT ra.round, s.session, s.date, s.time
+        FROM sessions s
+        JOIN races ra ON ra.id = s.race_id
+        WHERE ra.season = ?
+        """,
+        [season],
+    ).fetchall()
+    return {(row["round"], row["session"]): (row["date"], row["time"] or "") for row in rows}
+
+
+def compare_sessions(conn, season: int, refresh: bool = False) -> tuple[list[Discrepancy], int]:
+    """Weekend timetable agreement. Returns (discrepancies, sessions compared).
+
+    Compared exactly, date and start time both. A session listed by the source
+    and absent locally is reported: the timetable drives every "when did this
+    run" answer in the app, and a missing FP3 is not visible anywhere else --
+    the audit can only check that the sessions present point at real races.
+
+    The reverse -- local sessions the source no longer lists -- is also
+    reported, because the only way to acquire one is an ingestion bug.
+
+    ONE CAVEAT, stated because it is easy to miss: this reuses
+    `build_sessions.SESSION_KEYS`, the same source-key -> session-code mapping
+    the ingestion used. So the DATES and TIMES are independently corroborated,
+    and the count is complete, but a bug in that seven-entry mapping -- FP2
+    stored as FP3, say -- would be invisible here, because both sides would
+    make the same substitution. The mapping is short enough to verify by
+    reading, which is the only check it gets.
+    """
+    remote = {
+        (row["round"], row["session"]): (row["date"], row["time"])
+        for row in fetch_season_sessions(season, refresh)
+    }
+    local = local_sessions(conn, season)
+
+    found: list[Discrepancy] = []
+    for key in sorted(set(remote) | set(local)):
+        round_, code = key
+        if key not in local:
+            found.append(Discrepancy(season, round_, f"{code} missing", "--", remote[key][0]))
+            continue
+        if key not in remote:
+            found.append(Discrepancy(season, round_, f"{code} extra", local[key][0], "--"))
+            continue
+        if local[key] != remote[key]:
+            found.append(
+                Discrepancy(
+                    season, round_, code,
+                    " ".join(local[key]).strip(), " ".join(remote[key]).strip(),
+                )
+            )
+    return found, len(set(remote) & set(local))
 
 
 def local_poles(conn, season: int) -> dict[int, str]:
@@ -425,22 +514,25 @@ def main() -> int:
         all_found: list[Discrepancy] = []
         compared = 0
         poles_compared = 0
+        sessions_compared = 0
         circuit_pairs: set = set()
 
         for season in seasons:
             found, n = compare_season(conn, season, args.refresh)
             pole_found, pole_n = compare_poles(conn, season, args.refresh)
             circuit_found, pairs = collect_circuit_pairs(conn, season, args.refresh)
+            session_found, session_n = compare_sessions(conn, season, args.refresh)
 
             compared += n
             poles_compared += pole_n
+            sessions_compared += session_n
             circuit_pairs |= pairs
-            season_found = found + pole_found + circuit_found
+            season_found = found + pole_found + circuit_found + session_found
             all_found.extend(season_found)
 
             flag = "FAIL" if season_found else "ok  "
             say(f"{flag}  {season}  {n:>2} races  {pole_n:>2} poles  "
-                f"{len(season_found)} discrepancies")
+                f"{session_n:>3} sessions  {len(season_found)} discrepancies")
     finally:
         conn.close()
 
@@ -452,6 +544,7 @@ def main() -> int:
     say(f"{compared} races cross-validated against Jolpica-F1 "
         f"(winner, constructor, date, race name).")
     say(f"{poles_compared} qualifying P1s cross-validated.")
+    say(f"{sessions_compared} weekend sessions cross-validated (date and start time).")
     say(f"{len(circuit_pairs)} circuit assignments checked for a 1:1 mapping.")
 
     if all_found or bijection:
