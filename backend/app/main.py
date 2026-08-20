@@ -16,9 +16,13 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from . import backends, supabase_repo
+from . import backends, observability, supabase_repo
 from .db import connect
 from .routers import analysis, analytics_router, calendar, entities
+
+# Before anything else logs, so the startup lines below carry the same format
+# and request-id field as everything after them.
+observability.configure_logging()
 
 log = logging.getLogger(__name__)
 
@@ -27,6 +31,10 @@ log = logging.getLogger(__name__)
 # worse than refusing to start.
 ACTIVE_BACKEND = backends.check_ready()
 log.info("Serving from backend: %s", ACTIVE_BACKEND)
+
+# Said out loud at startup rather than left to be assumed. "Is error reporting
+# on?" is the question nobody asks until they need the answer to have been yes.
+log.info("Error reporting: %s", observability.configure_error_reporting())
 
 # Origins are configured, never wildcarded -- the default covers the local
 # Vite dev server only.
@@ -56,6 +64,13 @@ app = FastAPI(
     ),
 )
 
+# Added before CORS so it is *outermost* at runtime -- Starlette applies
+# middleware in reverse order of registration. That matters: a request
+# rejected by CORS should still appear in the access log, and a request that
+# fails inside CORS handling should still get a request id. An access log that
+# cannot see the requests another middleware turned away is not an access log.
+app.add_middleware(observability.AccessLogMiddleware)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[origin.strip() for origin in ALLOWED_ORIGINS if origin.strip()],
@@ -67,6 +82,28 @@ for module in (entities, calendar, analysis, analytics_router):
     app.include_router(module.router, prefix="/api")
 
 
+def _error(status: int, detail: str) -> JSONResponse:
+    """Every error body, built in one place.
+
+    Carries the request id alongside the safe message. That is the half of
+    observability the log cannot provide on its own: a reader who can quote
+    `request_id` turns "a page broke sometime this afternoon" into one grep.
+    It is safe to expose -- it is a random token this process minted (or a
+    validated one a proxy sent), and it identifies a log line, not a user.
+
+    `detail` keeps its exact wording and position. The frontend reads that key
+    and renders it verbatim, so it is a contract, not a message.
+    """
+    return JSONResponse(
+        status_code=status,
+        content={"detail": detail, "request_id": observability.current_request_id.get()},
+        headers={"X-Request-ID": observability.current_request_id.get()},
+    )
+
+
+STORE_UNAVAILABLE = "Data store unavailable. Retry shortly."
+
+
 @app.exception_handler(sqlite3.Error)
 async def database_error(request: Request, exc: sqlite3.Error) -> JSONResponse:
     """Log the real error, return a safe one.
@@ -74,7 +111,7 @@ async def database_error(request: Request, exc: sqlite3.Error) -> JSONResponse:
     Database internals never reach the client; the server log keeps the detail.
     """
     log.exception("Database error on %s", request.url.path)
-    return JSONResponse(status_code=503, content={"detail": "Data store unavailable. Retry shortly."})
+    return _error(503, STORE_UNAVAILABLE)
 
 
 @app.exception_handler(supabase_repo.SupabaseError)
@@ -91,9 +128,7 @@ async def supabase_error(request: Request, exc: Exception) -> JSONResponse:
     the URL and key live in the exception text.
     """
     log.exception("Supabase error on %s", request.url.path)
-    return JSONResponse(
-        status_code=503, content={"detail": "Data store unavailable. Retry shortly."}
-    )
+    return _error(503, STORE_UNAVAILABLE)
 
 
 @app.exception_handler(backends.CapabilityMissing)
@@ -105,10 +140,29 @@ async def capability_missing(request: Request, exc: Exception) -> JSONResponse:
     client deciding whether to back off and try again.
     """
     log.warning("Capability missing on %s: %s", request.url.path, exc)
-    return JSONResponse(
-        status_code=501,
-        content={"detail": "This endpoint is not available on the active data store."},
-    )
+    return _error(501, "This endpoint is not available on the active data store.")
+
+
+@app.exception_handler(Exception)
+async def unhandled_error(request: Request, exc: Exception) -> JSONResponse:
+    """The gap the other three handlers left open.
+
+    Everything above catches a *named* failure. Anything else -- a TypeError
+    in an analytics function, a KeyError on a row shape that changed -- escaped
+    as a bare 500 with Starlette's `Internal Server Error` as plain text and no
+    JSON body at all. That breaks the documented contract in the same way the
+    Supabase gap did before it was handled: the client reads `detail` to decide
+    what to tell a reader, and a body without one falls through to the generic
+    fallback in `services/api.ts`.
+
+    So: the same safe body as every other failure, and the real exception --
+    with its traceback and request id -- to the log and to Sentry when it is
+    configured. The wording says "unexpected" rather than "retry shortly"
+    because, unlike a store outage, retrying an unhandled bug is not advice
+    anyone should be given.
+    """
+    log.exception("Unhandled error on %s", request.url.path)
+    return _error(500, "Something went wrong handling this request. It has been logged.")
 
 
 def _health_sqlite() -> dict:

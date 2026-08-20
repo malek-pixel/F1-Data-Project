@@ -1,0 +1,113 @@
+# Supabase parity — the check the main CI workflow deliberately cannot run.
+#
+# WHY THIS IS A SEPARATE WORKFLOW
+# -------------------------------
+# ci.yml holds no Supabase credentials, and that decision is correct: its
+# trigger includes `pull_request`, so any secret attached to it would be
+# attached to a run of a fork's code. The consequence is that every Supabase
+# test skips in CI, and a skipped test is the same shade of green as a passing
+# one — so the badge says nothing at all about whether the Postgres leg still
+# matches SQLite.
+#
+# This workflow closes that gap without reopening the hole:
+#
+#   * `pull_request` is ABSENT from the triggers. Not narrowed — absent. Fork
+#     code never runs here, so the secrets are never exposed to it.
+#   * Guarded on the repository owner as well, so a fork that copies this file
+#     and pushes to its own `main` gets a skip rather than an attempt.
+#   * Read-only credentials. SUPABASE_ANON_KEY is RLS-limited to `select`, and
+#     the suite itself asserts that insert/update/delete are denied to it. The
+#     database password (SUPABASE_DB_URL) is NOT used here and must not be
+#     added — nothing in this workflow writes.
+#
+# INERT UNTIL CONFIGURED
+# ----------------------
+# Add SUPABASE_URL and SUPABASE_ANON_KEY as repository secrets to switch it on.
+# Until then the job fails a preflight step with an explicit message rather
+# than running a suite that would skip itself into a false green — which is the
+# failure mode this whole file exists to remove.
+
+name: Supabase parity
+
+on:
+  push:
+    branches: ["main"]
+  # So it can be run by hand after an ingestion or a restore, which is when it
+  # actually matters, rather than only when someone happens to push.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: supabase-parity
+  cancel-in-progress: true
+
+jobs:
+  parity:
+    name: SQLite vs Postgres, row for row
+    runs-on: ubuntu-latest
+    # A fork gets a clean skip, not a confusing credential error.
+    if: github.repository_owner == 'malek-pixel'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      # Same reasoning as ci.yml: not -r requirements.txt, which drags in
+      # fastf1 (and pandas, and scipy) to run no test at all.
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install "fastapi>=0.110" "pydantic>=2.6" "pytest>=8.0" "httpx>=0.27" \
+                      "uvicorn[standard]>=0.27" "requests>=2.31" "psycopg[binary]>=3.1"
+
+      # Without this the suites below would skip themselves and the job would
+      # pass, reporting "parity verified" having verified nothing. Fail here
+      # instead, where the message names the cause.
+      - name: Preflight — refuse to pass by skipping
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: |
+          if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_ANON_KEY" ]; then
+            echo "::error::SUPABASE_URL / SUPABASE_ANON_KEY are not set as repository secrets."
+            echo "::error::Without them every Supabase test skips, and this job would report a false green."
+            echo "::error::Add both secrets, or disable this workflow. See docs/OPERATIONS.md section 7."
+            exit 1
+          fi
+          echo "Credentials present. The parity suites will execute rather than skip."
+
+      # Parity is SQLite-versus-Postgres, so the SQLite side has to exist.
+      - name: Build the database from the committed CSV
+        run: python -m backend.etl.build
+
+      - name: Migration checksums
+        run: python supabase/verify_migrations.py
+
+      # Schema, row counts, analytics values, and the access model: select
+      # allowed, insert/update/delete denied with 42501.
+      - name: Schema, data and access model
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: python -m pytest backend/tests/test_supabase.py -q
+
+      # Row-level equality of the underlying tables, including all 552,138 lap
+      # timings, plus qualifying, sprints, pit stops and practice.
+      - name: Row-level store parity
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: python -m pytest backend/tests/test_store_parity.py backend/tests/test_backend_parity.py -q
+
+      # The one that matters most to a client: 77 request paths, compared
+      # response for response across both backends.
+      - name: API payload parity
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: python -m pytest backend/tests/test_api_payload_parity.py -q

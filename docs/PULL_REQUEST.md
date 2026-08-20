@@ -174,8 +174,12 @@ hand it to every fork's pull request.
   photos, 129 driver portraits, 35 team logos, 25 circuit outlines. The repo
   documents no source or licence for any of them. Every image has a graceful
   labelled fallback, so they can be removed without breaking a layout.
-- **No monitoring, error reporting or alerting.** If the deployed app breaks,
-  nothing tells anyone. `docs/OPERATIONS.md` §6 lists the minimum worth adding.
+- **Instrumented, but nothing is watching.** The API emits a structured access
+  line per request with a request id, and the frontend captures render errors,
+  global throws and dropped promises. Captured errors reach the console by
+  default and go no further, and there is no uptime check or alerting.
+  Choosing a sink is a deployment decision; `docs/OPERATIONS.md` §6 states the
+  options and what is still missing.
 - **No down-migrations.** A destructive schema change needs a restore point
   taken first; recovery procedure is in `docs/OPERATIONS.md` §2.
 - **The Supabase leg is verified locally only.** Its parity tests skip in CI by

@@ -642,7 +642,12 @@ def test_health_fails_when_the_active_store_is_down(monkeypatch):
         response = client.get("/api/health")
 
     assert response.status_code == 503
-    assert response.json() == {"detail": "Data store unavailable. Retry shortly."}
+    body = response.json()
+    assert body["detail"] == "Data store unavailable. Retry shortly."
+    # Nothing else leaks. `request_id` is the only companion key, and it is a
+    # token this process minted -- not host, driver error, or stack.
+    assert set(body) == {"detail", "request_id"}
+    assert body["request_id"] == response.headers["X-Request-ID"]
 
 
 def test_health_reports_the_same_coverage_from_whichever_store_answers(client):

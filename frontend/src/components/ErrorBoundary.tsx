@@ -1,5 +1,6 @@
 import { Component, type ErrorInfo, type ReactNode } from "react";
 import { EmptyState } from "./States";
+import { report } from "../services/reporting";
 
 /**
  * Catches a render-time throw and shows something a reader can act on.
@@ -47,10 +48,11 @@ export class ErrorBoundary extends Component<Props, State> {
   }
 
   componentDidCatch(error: Error, info: ErrorInfo) {
-    // Kept, not removed as "debug logging": this is the only record that a
-    // render failed. There is no error reporting in this project yet, so the
-    // console is the whole story -- see docs/OPERATIONS.md §6.
-    console.error("Render failed:", error, info.componentStack);
+    // Routed through `services/reporting` rather than straight to the console,
+    // so a render failure, a global throw and a dropped promise all arrive at
+    // one place and reach whatever sink the deployment installed. The console
+    // line still happens -- `report` writes it -- so nothing is lost locally.
+    report("render", error, { componentStack: info.componentStack ?? undefined });
   }
 
   componentDidUpdate(prev: Props) {

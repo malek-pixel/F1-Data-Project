@@ -317,9 +317,9 @@ previous page under a dozen back-button steps while the URL stays shareable.
 - `circuit_map.csv` encodes external knowledge, not source data; it should be reviewed when a season is added
 - Data is static. Nothing is live, and no screen implies an in-progress race
 - Driver portraits, car photos and team logos are third-party images and the repository records no source or licence for any of them. Every one has a graceful labelled fallback, so they can be removed without breaking a layout — see [docs/CAR_PHOTOS.md](docs/CAR_PHOTOS.md)
-- There is no monitoring, error reporting or alerting. If the deployed app breaks, nothing tells anyone — see [docs/OPERATIONS.md](docs/OPERATIONS.md) §6
+- The app is instrumented but nothing is watching it. The API emits a structured line per request with a request id, and the frontend captures render errors, global throws and dropped promises — but captured errors go to the console by default, and no uptime check or alerting exists. Instrumentation is not monitoring; picking a sink is a deployment decision, spelled out in [docs/OPERATIONS.md](docs/OPERATIONS.md) §6
 - Constructor standings apply two documented FIA championship penalties (McLaren 2007, Racing Point 2020) that cannot be reached by summing race results — see [METHODOLOGY.md](METHODOLOGY.md) §6.1
-- The Supabase leg needs credentials: without them its tests skip and parity is unverified rather than verified-good. The 24 migrations are checked in and `python supabase/verify_migrations.py` checks each file against the SQL the database recorded as applied
+- The Supabase leg needs credentials, and its tests skip without them — so CI, which holds none by design, proves the SQLite leg only. Parity was last verified against the live project on **2026-08-21** (134 tests, 0 skipped: migrations, RLS and grants, row-level equality, and 77 API paths compared response for response) — see [docs/OPERATIONS.md](docs/OPERATIONS.md) §4. A green CI badge does not re-establish that; only a re-run does
 
 ## Roadmap
 
@@ -328,7 +328,7 @@ points — have been **delivered**, and lap timings with them. What is left:
 
 1. **Car metadata** → the Car Library page is already built against its absence, and stays an empty shell until a source exists
 2. **Telemetry** → a different scale of data, and out of scope
-3. **Observability** → the deployed app currently reports nothing when it breaks; see [docs/OPERATIONS.md](docs/OPERATIONS.md) § 6
+3. **Observability** → the *code* side is done: request ids, a structured access log, an optional error-reporting hook on both sides, and client-side capture of the two failure classes React never routed anywhere. What remains is not code — an uptime check, and a sink for the reports the app now produces. See [docs/OPERATIONS.md](docs/OPERATIONS.md) § 6
 
 Anything added here needs a source first. Nothing on this list will be
 estimated to make a page look finished.

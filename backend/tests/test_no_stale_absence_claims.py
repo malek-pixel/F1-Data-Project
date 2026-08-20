@@ -146,3 +146,56 @@ def test_no_file_claims_a_dataset_is_absent_when_it_is_present(phrase):
         f"{present:,} rows contradict the claim {phrase!r}, still written at: "
         + ", ".join(offenders[:8])
     )
+
+
+# ---------------------------------------------------------------------------
+# The same failure mode, for capabilities rather than datasets.
+# ---------------------------------------------------------------------------
+#
+# The claims above go stale when a column gets populated. This one goes stale
+# when a module gets written, and it has now happened once: "there is no
+# monitoring, error reporting or alerting in this project" was written in
+# OPERATIONS.md, copied into README.md, into PULL_REQUEST.md, and into a
+# comment in ErrorBoundary.tsx -- four places, one of which was load-bearing
+# prose telling a reader not to expect a signal that now exists.
+#
+# The distinction being defended is narrow and worth keeping narrow. The app
+# is *instrumented*; nothing is *watching*. Saying "nothing is watching" must
+# stay sayable, because it is true and it is the more important half. What
+# must not stay sayable is the unqualified claim that no capture exists, when
+# backend/app/observability.py and frontend/src/services/reporting.ts both do.
+
+CAPABILITY_CLAIMS = {
+    # phrase -> the file whose existence makes it false
+    "no monitoring, error reporting or alerting": "backend/app/observability.py",
+    "there is no error reporting in this project": "frontend/src/services/reporting.ts",
+    "no error reporting in this project yet": "frontend/src/services/reporting.ts",
+}
+
+
+@pytest.mark.parametrize("phrase", sorted(CAPABILITY_CLAIMS))
+def test_no_file_claims_a_capability_is_absent_when_it_is_implemented(phrase):
+    proof = REPO_ROOT / CAPABILITY_CLAIMS[phrase]
+    if not proof.exists():
+        pytest.skip(f"{phrase!r} is still accurate: {proof.name} does not exist")
+
+    pattern = re.compile(re.escape(phrase), re.IGNORECASE)
+    offenders = []
+    for path in _searchable_files():
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError):
+            continue
+        lines = text.splitlines()
+        for index, line in enumerate(lines):
+            if not pattern.search(line):
+                continue
+            window = " ".join(lines[max(0, index - 2):index + 2]).lower()
+            if any(marker in window for marker in HISTORICAL_MARKERS):
+                continue
+            offenders.append(f"{path.relative_to(REPO_ROOT)}:{index + 1}")
+
+    assert not offenders, (
+        f"{proof.relative_to(REPO_ROOT)} implements it, but {phrase!r} is still written at: "
+        + ", ".join(offenders[:8])
+    )

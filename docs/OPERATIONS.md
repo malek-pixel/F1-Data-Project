@@ -177,6 +177,25 @@ Expected: `select` succeeds on the public tables and is denied on
 `42501 permission denied`. The suite skips itself when the `SUPABASE_*`
 variables are absent.
 
+### Last verified
+
+**2026-08-21 — run against the live project with credentials present, and
+passed.** This matters because the suites above are skip-by-default, and a
+skipped test reports the same green as a passing one. The distinction that had
+been outstanding was *verified-good* versus *unverified*; it is now the former,
+on this date, with these results:
+
+| Check | Result |
+|---|---|
+| `supabase/verify_migrations.py` | 24/24 match the SQL recorded as applied |
+| `test_supabase.py` — RLS, grants, row counts, analytics | 24 passed, 0 skipped |
+| `test_store_parity.py` + `test_backend_parity.py` — row-level SQLite vs Postgres | 27 passed |
+| `test_api_payload_parity.py` — 77 request paths, response for response | 83 passed |
+
+Re-run and re-date this table after any migration, ingestion or restore. **CI
+does not do it for you** — see the note in §7 — so if this date is old, the
+answer to "is Supabase still in parity" is *unknown*, not *yes*.
+
 ---
 
 ## 5. Deployment
@@ -196,6 +215,11 @@ built output during the audit.
 | `SUPABASE_SERVICE_ROLE_KEY` | Unused today | **Yes — bypasses RLS** | No |
 | `F1_ALLOWED_ORIGINS` | API | No | **Yes in production** |
 | `F1_BACKEND` | API | No | Defaults to `sqlite` |
+| `F1_LOG_FORMAT` | API | No | `text` (local) / set `json` in production |
+| `F1_LOG_LEVEL` | API | No | Defaults to `INFO` |
+| `F1_SLOW_REQUEST_MS` | API | No | Defaults to `1000` |
+| `F1_SENTRY_DSN` | API | No — a DSN is a write-only ingest URL | No; off when unset |
+| `F1_ENVIRONMENT` | API | No | Defaults to `production`; only read when a DSN is set |
 
 `.env` is gitignored and untracked; `.env.example` holds placeholders only. Git
 history was scanned during the audit and contains no real credential.
@@ -233,29 +257,126 @@ uvicorn backend.app.main:app --port 8000
 
 ## 6. Monitoring — what exists, and what does not
 
-**There is no monitoring, error reporting or alerting in this project today.**
-Nothing is silently collecting errors; if the deployed app breaks, no one is
-told. That is a statement of the current state, not a plan.
+The application is now **instrumented**. Whether anyone is **notified** is a
+deployment decision, and the difference between those two sentences is the
+whole of this section. Read the last subsection before assuming you are
+covered.
 
-What already exists to build on:
+### What the API emits
 
-* `/api/health` returns liveness *and* dataset coverage. Good uptime-check target.
-* Every handled failure returns `{"detail": …}` with a real status — `503` for a
-  data-store outage, `501` for a capability the active backend lacks, `422` for
-  invalid input. Server-side the real exception is logged; the client only ever
-  sees the safe message.
+`backend/app/observability.py`, wired in `main.py`:
 
-The minimum worth adding before a public launch, in priority order:
+* **A request id on every request.** Taken from an inbound `X-Request-ID` when
+  a proxy set one, minted otherwise. Echoed on the response, attached to every
+  log line the request produces, and returned in the body of every error
+  response as `request_id` — so a reader who says "it broke, id `a3f9…`" turns
+  an afternoon of guessing into one `grep`.
 
-1. **Uptime check on `/api/health`** — catches the whole class of "it's down".
-2. **Frontend error reporting** (Sentry or equivalent) — the SPA currently
-   turns a failed request into an error state with no signal to anyone.
-3. **API 5xx rate and p95 latency.** Slowest endpoints measured during the audit
-   were `dataset/summary` (~400–500 ms) and `records` (~340 ms); everything else
-   was under 200 ms.
+  The inbound header is length-bounded and alphabet-restricted, and anything
+  failing either check is **replaced rather than sanitised**. It is
+  attacker-controlled and lands in both a log line and a response header;
+  stripping a newline from `abc\nERROR forged entry` still writes the
+  attacker's text into your log.
 
-Not recommended: building custom infrastructure for any of this. Use the
-platform's.
+  One asymmetry worth knowing: the **header** is on every response without
+  exception, but `request_id` appears in the response **body** only for the
+  four handled failures (`503` store outage, `503` Supabase outage, `501`
+  missing capability, `500` unhandled). A routine `404` or `422` is raised as
+  an `HTTPException` and rendered by FastAPI's own handler, whose body is
+  `{"detail": …}` and nothing else. That was left alone deliberately — those
+  bodies are an established contract the frontend and the API tests both read,
+  and the header already carries the id for anyone who needs it.
+
+* **One structured line per request** — method, route *template*, status,
+  duration. The template (`/api/drivers/{driver_id}`) rather than the concrete
+  path, because 129 paths that are really one endpoint make a latency
+  percentile meaningless. Concrete paths are logged for 4xx/5xx, where the
+  specific value is usually the point.
+
+  Levels are chosen so that filtering to `WARNING` is a useful default:
+  `ERROR` for 5xx, `WARNING` for 4xx **and for any request slower than
+  `F1_SLOW_REQUEST_MS`** (default 1000 ms — above the audit's slowest known-good
+  endpoint, low enough to catch a regression rather than only an outage),
+  `INFO` otherwise.
+
+* **JSON output on demand.** `F1_LOG_FORMAT=json` emits one object per line,
+  which every log aggregator parses without a custom rule, and which a message
+  containing a newline cannot forge a second entry in. Text remains the default
+  for local work.
+
+That is deliberately all of it. **This project still builds no monitoring
+infrastructure of its own** — no `/metrics` endpoint, no counters, no storage.
+An in-process counter resets on every deploy and is per worker, so it would be
+a number that looks authoritative and is not. Emitting a clean structured
+stream and letting the platform aggregate the 5xx rate and the p95 is the same
+judgement as before, now actually actionable.
+
+### What the frontend does
+
+`frontend/src/services/reporting.ts` is the single point every client-side
+failure passes through. It closed a real coverage gap: `ErrorBoundary` catches
+a component that throws *while rendering*, which is one of three ways this app
+can fail. The other two reached nothing at all —
+
+* an error thrown in an event handler or a timer, which React does not route
+  to a boundary;
+* a rejected promise nobody handled.
+
+Both are captured now, via `window` `error` and `unhandledrejection` handlers
+installed in `main.tsx` before the first render. Reports are normalised (a
+`throw "string"` and a non-`Error` rejection reason both survive), carry the
+route the reader was on, and are **de-duplicated** — a render loop throwing
+every frame reports once, not four hundred times.
+
+### The part that is still a decision, not a default
+
+**By default, captured frontend errors go to the browser console and no
+further.** They are captured, normalised and de-duplicated; they are not
+transmitted. A console message in a visitor's browser tells nobody anything,
+and this document would be lying if it implied otherwise.
+
+Making them leave the browser needs a sink, which is a deployment choice, so
+the code exposes a seam rather than a hardcoded vendor: call `setReporter`
+once at startup and every captured error flows to it. Two supported options:
+
+1. **Install an SDK.** `npm i @sentry/browser`, then in `main.tsx`:
+   ```ts
+   import * as Sentry from "@sentry/browser";
+   Sentry.init({ dsn: import.meta.env.VITE_SENTRY_DSN });
+   setReporter((entry) => Sentry.captureException(new Error(entry.message), { extra: entry }));
+   ```
+   No SDK is imported today on purpose: shipping ~30 KB to every visitor for a
+   seam a deployment may never use is a cost with no current benefit.
+
+2. **Post them to the API**, so client errors land in the same structured log
+   stream as server errors. **This is not implemented, and should not be added
+   without deciding one thing first:** the API is read-only and its CORS
+   middleware allows `GET` only. A public `POST /api/client-errors` is a
+   write endpoint on a read-only service and an unauthenticated log-flooding
+   target, so it needs a size cap and a rate limit in the same change. That is
+   a real architectural decision, not a wiring task, which is why it is written
+   down here rather than quietly shipped.
+
+**The API side has the same shape.** `F1_SENTRY_DSN` initialises Sentry *if*
+`sentry-sdk` is installed; it is not a dependency of this project either. A DSN
+set with no SDK present logs `MISCONFIGURED` at startup and reports nothing —
+loudly, because a deployment that believes it has error reporting and does not
+is worse than one that knows it has none. Startup always states which of the
+three states it is in.
+
+### Still worth doing before a public launch
+
+1. **An uptime check on `/api/health`** — catches the whole class of "it's
+   down", and this project does not provide it. Note the endpoint dispatches
+   through the active backend rather than reading SQLite unconditionally, so a
+   store outage surfaces here as a 503 instead of a cheerful 200.
+2. **Pick a sink** for the error reports both sides now produce (above).
+3. **Alerting thresholds** on the 5xx rate and p95 the logs now support. The
+   audit measured `dataset/summary` at 400–500 ms and `records` at ~340 ms as
+   the slowest endpoints, with everything else under 200 ms.
+
+Instrumentation is not monitoring until something is watching. Items 1–3 are
+what "watching" means here, and none of them is code in this repository.
 
 ---
 
@@ -269,10 +390,26 @@ platform's.
 | Verify migration checksums | After any schema change | `python supabase/verify_migrations.py` |
 | Backend tests | Before every deploy | `python -m pytest backend/tests -q` |
 | Frontend tests | Before every deploy | `cd frontend && npm test` |
+| **Re-verify Supabase parity** | After any migration, ingestion or restore | `python -m pytest backend/tests/test_supabase.py backend/tests/test_store_parity.py backend/tests/test_backend_parity.py backend/tests/test_api_payload_parity.py -q` — then re-date the table in §4 |
 | Dependency advisories | Monthly | `cd frontend && npm audit --omit=dev` |
 
 CI (`.github/workflows/ci.yml`) runs the build, both test suites, the data
 audit, the migration checksums and the production build on every push.
+
+**CI proves the SQLite leg only, and that is on purpose.** It holds no
+Supabase credentials, so every Supabase test skips there — deliberately, since
+adding the secrets to a workflow with a `pull_request` trigger would attach
+them to a fork's pull request. A green CI badge therefore says nothing about
+Supabase parity, and reading it as if it did is the exact mistake the §4 table
+exists to prevent.
+
+`.github/workflows/supabase-parity.yml` closes that gap without reopening the
+fork problem: it runs the four parity suites against the live project, is
+triggered only by a push to `main` or a manual dispatch (**never**
+`pull_request`), and is additionally guarded on the repository owner so a fork
+cannot run it. It stays inert until `SUPABASE_URL` and `SUPABASE_ANON_KEY` are
+added as repository secrets, and reports loudly rather than silently green if
+they are missing.
 
 ### Standing advisory assessments
 
